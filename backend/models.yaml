@@ -1,0 +1,563 @@
+version: 1
+catalog_note: >
+  Ориентировочные VRAM/RAM/disk — только для первого admission.
+  После первого load + warmup используются измеренные значения из БД.
+
+models:
+  - id: faster-whisper-tiny
+    name: Faster-Whisper Tiny
+    category: stt
+    adapter: faster_whisper
+    description: Быстрая базовая модель Whisper в CTranslate2; хороша для черновиков и CPU.
+    license: MIT
+    license_url: https://github.com/SYSTRAN/faster-whisper
+    commercial: true
+    russian: confirmed
+    languages: [ru, en, de, fr, es, it, pt, pl, uk, tr, zh, ja, ko, ar, hi]
+    capabilities: [timestamps, word_timestamps, vad, gpu, cpu, batch, language_detect]
+    warnings: []
+    variants:
+      - id: int8
+        label: int8 · CTranslate2
+        device: gpu
+        precision: int8
+        vram_gb: 0.8
+        ram_gb: 1.0
+        disk_gb: 0.08
+        download:
+          type: hf
+          repo: Systran/faster-whisper-tiny
+          revision: d90ca5fe260221311c53c58e660288d3deb8d356
+      - id: cpu-int8
+        label: CPU · int8
+        device: cpu
+        precision: int8
+        vram_gb: 0.0
+        ram_gb: 1.2
+        disk_gb: 0.08
+        download:
+          type: hf
+          repo: Systran/faster-whisper-tiny
+          revision: d90ca5fe260221311c53c58e660288d3deb8d356
+
+  - id: faster-whisper-base
+    name: Faster-Whisper Base
+    category: stt
+    adapter: faster_whisper
+    description: Компактная многоязычная модель для параллельной работы с TTS на 8 GB.
+    license: MIT
+    license_url: https://github.com/SYSTRAN/faster-whisper
+    commercial: true
+    russian: confirmed
+    languages: [ru, en, de, fr, es, it, pt, pl, uk, tr, zh, ja, ko, ar, hi]
+    capabilities: [timestamps, word_timestamps, vad, gpu, cpu, batch, language_detect]
+    warnings: []
+    variants:
+      - id: int8
+        label: int8 · CTranslate2
+        device: gpu
+        precision: int8
+        vram_gb: 1.2
+        ram_gb: 1.4
+        disk_gb: 0.15
+        download:
+          type: hf
+          repo: Systran/faster-whisper-base
+          revision: ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66
+      - id: cpu-int8
+        label: CPU · int8
+        device: cpu
+        precision: int8
+        vram_gb: 0.0
+        ram_gb: 1.6
+        disk_gb: 0.15
+        download:
+          type: hf
+          repo: Systran/faster-whisper-base
+          revision: ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66
+
+  - id: faster-whisper-small
+    name: Faster-Whisper Small
+    category: stt
+    adapter: faster_whisper
+    description: Основной кандидат для параллельного пресета STT + TTS на 8 GB.
+    license: MIT
+    license_url: https://github.com/SYSTRAN/faster-whisper
+    commercial: true
+    russian: confirmed
+    languages: [ru, en, de, fr, es, it, pt, pl, uk, tr, zh, ja, ko, ar, hi]
+    capabilities: [timestamps, word_timestamps, vad, gpu, cpu, batch, language_detect]
+    warnings: []
+    variants:
+      - id: int8
+        label: int8 · CTranslate2
+        device: gpu
+        precision: int8
+        vram_gb: 2.0
+        ram_gb: 2.4
+        disk_gb: 0.49
+        download:
+          type: hf
+          repo: Systran/faster-whisper-small
+          revision: 536b0662742c02347bc0e980a01041f333bce120
+      - id: cpu-int8
+        label: CPU · int8
+        device: cpu
+        precision: int8
+        vram_gb: 0.0
+        ram_gb: 2.8
+        disk_gb: 0.49
+        download:
+          type: hf
+          repo: Systran/faster-whisper-small
+          revision: 536b0662742c02347bc0e980a01041f333bce120
+
+  - id: faster-whisper-medium
+    name: Faster-Whisper Medium
+    category: stt
+    adapter: faster_whisper
+    description: Более точная модель; на 8 GB обычно требует выгрузки TTS.
+    license: MIT
+    license_url: https://github.com/SYSTRAN/faster-whisper
+    commercial: true
+    russian: confirmed
+    languages: [ru, en, de, fr, es, it, pt, pl, uk, tr, zh, ja, ko, ar, hi]
+    capabilities: [timestamps, word_timestamps, vad, gpu, cpu, batch, language_detect]
+    warnings: []
+    variants:
+      - id: int8
+        label: int8 · CTranslate2
+        device: gpu
+        precision: int8
+        vram_gb: 3.2
+        ram_gb: 4.0
+        disk_gb: 1.53
+        download:
+          type: hf
+          repo: Systran/faster-whisper-medium
+          revision: 08e178d48790749d25932bbc082711ddcfdfbc4f
+
+  - id: faster-whisper-large-v3-turbo
+    name: Faster-Whisper Large v3 Turbo
+    category: stt
+    adapter: faster_whisper
+    description: Large-качество с меньшим числом шагов декодера; замеряется на конкретной машине.
+    license: MIT
+    license_url: https://huggingface.co/deepdml/faster-whisper-large-v3-turbo-ct2
+    commercial: true
+    russian: confirmed
+    languages: [ru, en, de, fr, es, it, pt, pl, uk, tr, zh, ja, ko, ar, hi]
+    capabilities: [timestamps, word_timestamps, vad, gpu, cpu, batch, language_detect]
+    warnings: [Фактический пик VRAM может быть выше каталожного, смотрите замер.]
+    variants:
+      - id: int8
+        label: int8 · CTranslate2
+        device: gpu
+        precision: int8
+        vram_gb: 3.8
+        ram_gb: 4.5
+        disk_gb: 1.62
+        download:
+          type: hf
+          repo: deepdml/faster-whisper-large-v3-turbo-ct2
+          revision: 4df90f75321148c3a29a9e2351b7ddf8f5b115a8
+
+  - id: gigaam-v2
+    name: GigaAM v2
+    category: stt
+    adapter: gigaam
+    description: Русскоязычная Conformer-модель; транскрипция короткими окнами.
+    license: MIT
+    license_url: https://github.com/salute-developers/GigaAM/blob/main/LICENSE
+    commercial: true
+    russian: confirmed
+    languages: [ru]
+    capabilities: [timestamps, gpu, cpu, longform_chunking]
+    warnings: [Для длинного аудио используется нарезка окнами; пакет gigaam скачивает веса при первом запуске.]
+    variants:
+      - id: rnnt
+        label: RNNT · fp16
+        device: gpu
+        precision: fp16
+        vram_gb: 1.5
+        ram_gb: 2.2
+        disk_gb: 0.9
+        download:
+          type: package
+          package: gigaam
+          package_model: v2_rnnt
+      - id: cpu
+        label: CPU · fp32
+        device: cpu
+        precision: fp32
+        vram_gb: 0.0
+        ram_gb: 2.4
+        disk_gb: 0.9
+        download:
+          type: package
+          package: gigaam
+          package_model: v2_rnnt
+
+  - id: piper
+    name: Piper
+    category: tts
+    adapter: piper
+    description: Лёгкий ONNX-синтез на CPU; много голосов, включая русские.
+    license: MIT
+    license_url: https://github.com/rhasspy/piper
+    commercial: true
+    russian: confirmed
+    languages: [ru, en, de, fr, es, it, pt, pl, uk]
+    capabilities: [gpu, cpu, voices, speed, streaming]
+    warnings: [Лицензия конкретного голоса указана в его карточке.]
+    variants:
+      - id: ru-voices
+        label: CPU · русские голоса
+        device: cpu
+        precision: int8
+        vram_gb: 0.0
+        ram_gb: 0.35
+        disk_gb: 0.26
+        download:
+          type: hf_files
+          repo: rhasspy/piper-voices
+          revision: e7229f7d33a10e145e109b886d661984201ac3c4
+          include:
+            - ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx
+            - ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx.json
+            - ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx
+            - ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx.json
+            - ru/ru_RU/denis/medium/ru_RU-denis-medium.onnx
+            - ru/ru_RU/denis/medium/ru_RU-denis-medium.onnx.json
+            - ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx
+            - ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx.json
+          voice_glob: "**/*.onnx"
+      - id: en-voices
+        label: CPU · английские голоса
+        device: cpu
+        precision: int8
+        vram_gb: 0.0
+        ram_gb: 0.35
+        disk_gb: 0.14
+        download:
+          type: hf_files
+          repo: rhasspy/piper-voices
+          revision: e7229f7d33a10e145e109b886d661984201ac3c4
+          include:
+            - en/en_US/amy/medium/en_US-amy-medium.onnx
+            - en/en_US/amy/medium/en_US-amy-medium.onnx.json
+            - en/en_US/ryan/medium/en_US-ryan-medium.onnx
+            - en/en_US/ryan/medium/en_US-ryan-medium.onnx.json
+          voice_glob: "**/*.onnx"
+
+  - id: silero-v4
+    name: Silero TTS v4
+    category: tts
+    adapter: silero
+    description: Русский TTS на CPU/GPU, 5 голосов, простая и быстрая модель.
+    license: CC-BY-NC-4.0
+    license_url: https://github.com/snakers4/silero-models/blob/master/LICENSE
+    commercial: false
+    russian: confirmed
+    languages: [ru]
+    capabilities: [gpu, cpu, voices, speed, sample_rate_48k]
+    warnings: [Только некоммерческое использование (CC BY-NC 4.0).]
+    variants:
+      - id: v4-ru
+        label: v4_ru · 40 MB
+        device: cpu
+        precision: fp32
+        vram_gb: 0.0
+        ram_gb: 0.8
+        disk_gb: 0.04
+        download:
+          type: url_files
+          files:
+            - url: https://models.silero.ai/models/tts/ru/v4_ru.pt
+              path: v4_ru.pt
+              size: 40107184
+      - id: v4-ru-gpu
+        label: v4_ru · GPU
+        device: gpu
+        precision: fp16
+        vram_gb: 0.5
+        ram_gb: 0.8
+        disk_gb: 0.04
+        download:
+          type: url_files
+          files:
+            - url: https://models.silero.ai/models/tts/ru/v4_ru.pt
+              path: v4_ru.pt
+              size: 40107184
+
+  - id: kokoro-82m
+    name: Kokoro 82M
+    category: tts
+    adapter: kokoro
+    description: Быстрый английский TTS (Apache 2.0); русского языка нет, клонирования и эмоций нет.
+    license: Apache-2.0
+    license_url: https://huggingface.co/hexgrad/Kokoro-82M
+    commercial: true
+    russian: none
+    languages: [en, es, fr, hi, it, ja, pt, zh]
+    capabilities: [gpu, cpu, voices, speed, streaming]
+    warnings: [Русский язык не поддерживается. Клонирование голоса и эмоции недоступны.]
+    variants:
+      - id: fp16
+        label: fp16 · 82M
+        device: gpu
+        precision: fp16
+        vram_gb: 1.4
+        ram_gb: 1.8
+        disk_gb: 0.38
+        download:
+          type: hf_files
+          repo: hexgrad/Kokoro-82M
+          revision: f3ff3571791e39611d31c381e3a41a3af07b4987
+          include:
+            - kokoro-v1_0.pth
+            - config.json
+            - voices/af_heart.pt
+            - voices/af_bella.pt
+            - voices/am_adam.pt
+            - voices/am_michael.pt
+            - voices/bf_emma.pt
+            - voices/bm_george.pt
+            - voices/zf_xiaoxiao.pt
+          voice_glob: "voices/*.pt"
+      - id: cpu
+        label: CPU · fp32
+        device: cpu
+        precision: fp32
+        vram_gb: 0.0
+        ram_gb: 2.2
+        disk_gb: 0.38
+        download:
+          type: hf_files
+          repo: hexgrad/Kokoro-82M
+          revision: f3ff3571791e39611d31c381e3a41a3af07b4987
+          include:
+            - kokoro-v1_0.pth
+            - config.json
+            - voices/af_heart.pt
+            - voices/af_bella.pt
+            - voices/am_adam.pt
+            - voices/am_michael.pt
+            - voices/bf_emma.pt
+            - voices/bm_george.pt
+            - voices/zf_xiaoxiao.pt
+          voice_glob: "voices/*.pt"
+
+  - id: chatterbox-multilingual
+    name: Chatterbox Multilingual
+    category: clone
+    adapter: chatterbox
+    description: 23 языка, клонирование по короткому референсу, управление экспрессией. Все файлы содержат watermark.
+    license: MIT
+    license_url: https://github.com/resemble-ai/chatterbox
+    commercial: true
+    russian: confirmed
+    languages: [ru, en, de, fr, es, it, pt, pl, tr, nl, sv, "no", da, fi, el, he, hi, ja, ko, ms, sw, ar, zh]
+    capabilities: [clone, emotions, gpu, cpu, watermark, speed]
+    warnings: [PerTh watermark встроен во все выходные файлы и не удаляется приложением.]
+    watermark: true
+    variants:
+      - id: fp16
+        label: Multilingual V3 · fp16
+        device: gpu
+        precision: fp16
+        vram_gb: 4.2
+        ram_gb: 5.0
+        disk_gb: 3.3
+        download:
+          type: hf_files
+          repo: ResembleAI/chatterbox
+          revision: 5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18
+          include:
+            - conds.pt
+            - ve.pt
+            - grapheme_mtl_merged_expanded_v1.json
+            - Cangjie5_TC.json
+            - t3_mtl23ls_v2.safetensors
+            - s3gen.pt
+      - id: cpu
+        label: Multilingual · CPU
+        device: cpu
+        precision: fp32
+        vram_gb: 0.0
+        ram_gb: 7.0
+        disk_gb: 3.3
+        download:
+          type: hf_files
+          repo: ResembleAI/chatterbox
+          revision: 5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18
+          include:
+            - conds.pt
+            - ve.pt
+            - grapheme_mtl_merged_expanded_v1.json
+            - Cangjie5_TC.json
+            - t3_mtl23ls_v2.safetensors
+            - s3gen.pt
+
+  - id: chatterbox-turbo
+    name: Chatterbox Turbo 350M
+    category: clone
+    adapter: chatterbox_turbo
+    description: Облегчённая англоязычная модель для низкой задержки; клонирование и паралингвистические теги.
+    license: MIT
+    license_url: https://github.com/resemble-ai/chatterbox
+    commercial: true
+    russian: none
+    languages: [en]
+    capabilities: [clone, emotions, gpu, cpu, watermark, realtime]
+    warnings: [Только английский. Watermark встроен во все выходные файлы.]
+    watermark: true
+    variants:
+      - id: fp16
+        label: Turbo 350M · fp16
+        device: gpu
+        precision: fp16
+        vram_gb: 3.2
+        ram_gb: 3.6
+        disk_gb: 4.1
+        download:
+          type: hf_files
+          repo: ResembleAI/chatterbox-turbo
+          revision: 749d1c1a46eb10492095d68fbcf55691ccf137cd
+          include:
+            - conds.pt
+            - ve.safetensors
+            - tokenizer_config.json
+            - added_tokens.json
+            - merges.txt
+            - vocab.json
+            - t3_turbo_v1.safetensors
+            - t3_turbo_v1.yaml
+            - s3gen.safetensors
+
+  - id: qwen3-tts-0.6b
+    name: Qwen3-TTS 0.6B Base
+    category: clone
+    adapter: qwen3_tts
+    description: Клонирование голоса Qwen3-TTS (Base), 10 языков, русский заявлен.
+    license: Apache-2.0
+    license_url: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base
+    commercial: true
+    russian: verify
+    languages: [ru, en, zh, ja, ko, de, fr, es, it, pt]
+    capabilities: [clone, gpu, instruction_control]
+    warnings: [Русский заявлен upstream; фактическое качество проверяется тестовой фразой. Voice Design доступен только в 1.7B.]
+    variants:
+      - id: bf16
+        label: Base · bf16
+        device: gpu
+        precision: bf16
+        vram_gb: 2.8
+        ram_gb: 4.2
+        disk_gb: 2.52
+        download:
+          type: hf
+          repo: Qwen/Qwen3-TTS-12Hz-0.6B-Base
+          revision: 5d83992436eae1d760afd27aff78a71d676296fc
+
+  - id: qwen3-tts-1.7b
+    name: Qwen3-TTS 1.7B Base
+    category: clone
+    adapter: qwen3_tts
+    description: Клонирование голоса повышенного качества, 10 языков.
+    license: Apache-2.0
+    license_url: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base
+    commercial: true
+    russian: verify
+    languages: [ru, en, zh, ja, ko, de, fr, es, it, pt]
+    capabilities: [clone, gpu, instruction_control]
+    warnings: [Требует много VRAM; на 8 GB обычно только эксклюзивно и без второй модели.]
+    variants:
+      - id: bf16
+        label: Base · bf16
+        device: gpu
+        precision: bf16
+        vram_gb: 5.5
+        ram_gb: 7.0
+        disk_gb: 4.54
+        download:
+          type: hf
+          repo: Qwen/Qwen3-TTS-12Hz-1.7B-Base
+          revision: fd4b254389122332181a7c3db7f27e918eec64e3
+
+  - id: qwen3-tts-1.7b-design
+    name: Qwen3-TTS 1.7B VoiceDesign
+    category: clone
+    adapter: qwen3_tts_design
+    description: Создание голоса по текстовому описанию без референса.
+    license: Apache-2.0
+    license_url: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
+    commercial: true
+    russian: verify
+    languages: [ru, en, zh, ja, ko, de, fr, es, it, pt]
+    capabilities: [voice_design, gpu, instruction_control]
+    warnings: [Voice Design доступен только в 1.7B. Требует эксклюзивного режима на 8 GB.]
+    variants:
+      - id: bf16
+        label: VoiceDesign · bf16
+        device: gpu
+        precision: bf16
+        vram_gb: 5.5
+        ram_gb: 7.0
+        disk_gb: 4.52
+        download:
+          type: hf
+          repo: Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
+          revision: 5ecdb67327fd37bb2e042aab12ff7391903235d3
+
+  - id: voxcpm2
+    name: VoxCPM2
+    category: clone
+    adapter: voxcpm2
+    description: 2B, 30 языков, 48 кГц, клонирование и voice design. Только эксклюзивный режим.
+    license: Apache-2.0
+    license_url: https://huggingface.co/openbmb/VoxCPM2
+    commercial: true
+    russian: confirmed
+    languages: [ru, en, zh, ja, ko, de, fr, es, it, pt, pl, tr, ar, he, hi, th, vi, id, ms, nl, sv, "no", da, fi, el, sw]
+    capabilities: [clone, voice_design, gpu, exclusive, sample_rate_48k, style_control]
+    warnings: [FP16-вариант не помещается в 8 GB с резервом. GGUF-путь проверяется отдельно.]
+    requires_exclusive: true
+    variants:
+      - id: fp16
+        label: 2B · fp16
+        device: gpu
+        precision: fp16
+        vram_gb: 8.0
+        ram_gb: 8.0
+        disk_gb: 4.96
+        download:
+          type: hf
+          repo: openbmb/VoxCPM2
+          revision: 32279effe8c19989596f05d353d1447f51d9e915
+
+  - id: omnivoice
+    name: OmniVoice 0.6B
+    category: clone
+    adapter: omnivoice
+    description: 600+ языков, zero-shot клонирование и voice design; веса только для некоммерческого использования.
+    license: CC-BY-NC-4.0
+    license_url: https://huggingface.co/k2-fsa/OmniVoice
+    commercial: false
+    russian: confirmed
+    languages: [ru, en, zh, ja, ko, de, fr, es, it, pt, ar, hi, tr, pl, uk, vi, th, id]
+    capabilities: [clone, voice_design, gpu, nc_only, sample_rate_24k]
+    warnings: ["Веса CC-BY-NC: только некоммерческое использование. Перед загрузкой требуется подтверждение."]
+    requires_consent: true
+    variants:
+      - id: fp16
+        label: 0.6B · fp16
+        device: gpu
+        precision: fp16
+        vram_gb: 2.6
+        ram_gb: 4.0
+        disk_gb: 3.27
+        download:
+          type: hf
+          repo: k2-fsa/OmniVoice
+          revision: c5fdb5ccb189668d56333f77ba2629f4cd7535f4
