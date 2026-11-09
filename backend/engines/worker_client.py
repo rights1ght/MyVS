@@ -236,7 +236,17 @@ class WorkerClient:
             raise WorkerError("WORKER_TIMEOUT", "Операция модели заняла слишком много времени.")
 
     def infer(self, payload: dict[str, Any], on_progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
-        return self.call("infer", payload, timeout=None, on_progress=on_progress)
+        # Each TTS/STT request is bounded. A stuck native runtime must not keep
+        # a worker and its GPU allocation alive indefinitely.
+        try:
+            return self.call("infer", payload, timeout=600.0, on_progress=on_progress)
+        except WorkerError as exc:
+            if exc.code == "WORKER_TIMEOUT":
+                try:
+                    self.kill()
+                except Exception:
+                    logger.exception("failed to terminate timed-out worker")
+            raise
 
     def ping(self) -> dict[str, Any]:
         return self.call("ping", timeout=10.0)
@@ -284,8 +294,10 @@ class WorkerClient:
                     pass
         try:
             process.wait(timeout=5)
-        except Exception:
-            pass
+        except subprocess.TimeoutExpired as exc:
+            raise WorkerError("WORKER_STOP_TIMEOUT", "Не удалось подтвердить завершение процесса модели.") from exc
+        if process.poll() is None:
+            raise WorkerError("WORKER_STOP_TIMEOUT", "Процесс модели всё ещё работает после попытки завершения.")
         self.process = None
 
     def restart(self, timeout: float = 900.0) -> dict[str, Any]:

@@ -91,6 +91,9 @@ class ModelRuntime:
 class ResourceManager:
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        # Model process lifecycle is serialized to prevent duplicate workers,
+        # reservation races and load/unload interleaving across model variants.
+        self._lifecycle_lock = threading.RLock()
         self._runtimes: dict[str, ModelRuntime] = {}
         self._reserved_vram_gb = 0.0
         self._reserved_ram_gb = 0.0
@@ -188,7 +191,12 @@ class ResourceManager:
         if variant.install_state != "installed":
             raise ResourceError("MODEL_NOT_INSTALLED", "Модель не скачана. Откройте менеджер моделей.", variant_id=variant.id)
         runtime = self._runtimes.get(model_id)
-        if runtime and runtime.state in ("loaded", "busy"):
+        if (
+            runtime
+            and runtime.state in ("loaded", "busy")
+            and runtime.variant_id == variant.id
+            and ("gpu" if runtime.device.startswith("cuda") else "cpu") == target_device
+        ):
             mem = self._mem()
             return ResourcePlan(
                 model_id=model_id,
@@ -215,6 +223,14 @@ class ResourceManager:
             need_vram = max(0.0, base)
             need_ram = measurement.ram_gb if measurement and measurement.ram_gb else variant.ram_estimate_gb + 0.5
         mem = self._mem()
+        # When replacing an already loaded variant of this same model, account
+        # for the memory that will be released before the new worker is started.
+        if runtime and runtime.state in ("loaded", "busy"):
+            if target_device == "gpu" and runtime.device.startswith("cuda"):
+                reclaimed = runtime.vram_mb / 1024 if runtime.vram_mb else self._estimate_loaded(runtime)
+                mem["free_vram_gb"] = round(mem["free_vram_gb"] + reclaimed, 3)
+            elif target_device == "cpu" and runtime.device == "cpu":
+                mem["free_ram_gb"] = round(mem["free_ram_gb"] + runtime.ram_mb / 1024, 3)
         if target_device == "cpu":
             free_vram = mem["free_vram_gb"]
             margin = mem["free_ram_gb"] - need_ram
@@ -262,7 +278,7 @@ class ResourceManager:
             reclaimed = runtime.vram_mb / 1024 if runtime.vram_mb else self._estimate_loaded(runtime)
             options.append(
                 {
-                    "id": "evict",
+                    "id": f"evict:{runtime.model_id}",
                     "label": f"Выгрузить {runtime.model_name} (LRU)",
                     "model_id": runtime.model_id,
                     "reclaim_gb": round(reclaimed, 2),
@@ -274,7 +290,7 @@ class ResourceManager:
                 if other.device == "cpu" and other.install_state == "installed":
                     options.append(
                         {
-                            "id": "cpu",
+                            "id": f"cpu:{other.id}",
                             "label": "Перевести на CPU",
                             "variant_id": other.id,
                             "would_fit": mem["free_ram_gb"] - (other.ram_estimate_gb + 0.3) >= 0,
@@ -285,7 +301,7 @@ class ResourceManager:
                 if other.device == "gpu" and other.install_state == "installed" and other.id != variant.id and other.vram_estimate_gb < variant.vram_estimate_gb:
                     options.append(
                         {
-                            "id": "quant",
+                            "id": f"quant:{other.id}",
                             "label": f"Взять вариант {other.label or other.precision}",
                             "variant_id": other.id,
                             "would_fit": mem["free_vram_gb"] - other.vram_estimate_gb >= 0.25,
@@ -319,7 +335,7 @@ class ResourceManager:
         elif self._mode == "economy" and other:
             idle = [runtime for runtime in other if not runtime.busy]
             if idle:
-                self.unload(max(idle, key=lambda item: item.last_used).model_id, reason="economy")
+                self.unload(min(idle, key=lambda item: item.last_used).model_id, reason="economy")
             else:
                 raise ResourceError("GPU_BUSY", "Экономный режим: GPU занята другой моделью.", busy_model=other[0].model_name)
 
@@ -333,25 +349,47 @@ class ResourceManager:
         force: bool = False,
         restoring: bool = False,
     ) -> ModelRuntime:
+        with self._lifecycle_lock:
+            return self._ensure_loaded_locked(
+                model_id, variant_id, device=device, task_id=task_id, force=force, restoring=restoring
+            )
+
+    def _ensure_loaded_locked(
+        self,
+        model_id: str,
+        variant_id: str | None = None,
+        *,
+        device: str | None = None,
+        task_id: str = "",
+        force: bool = False,
+        restoring: bool = False,
+    ) -> ModelRuntime:
         with self._lock:
-            runtime = self._runtimes.get(model_id)
-            if runtime and runtime.state in ("loaded", "busy"):
-                if device and runtime.device != ("cuda:0" if device == "gpu" else "cpu"):
-                    raise ResourceError("DEVICE_CHANGE_REQUIRED", "Модель уже загружена на другом устройстве. Выгрузите её.")
-                runtime.last_used = time.monotonic()
-                return runtime
             model = registry.get(model_id)
             if not model:
                 raise ResourceError("MODEL_NOT_FOUND", "Модель не найдена.")
             variant = registry.get_variant(model_id, variant_id) or registry.default_variant(model_id)
             if not variant:
                 raise ResourceError("VARIANT_NOT_FOUND", "Вариант модели не найден.")
-            if not restoring:
-                self._enforce_mode(model, variant)
             if device and device != variant.device:
                 candidates = [v for v in registry.variants(model_id) if v.device == device and v.install_state == "installed"]
                 if candidates:
                     variant = candidates[0]
+                else:
+                    raise ResourceError("VARIANT_NOT_INSTALLED", f"Нет установленного варианта для {device}.")
+            runtime = self._runtimes.get(model_id)
+            desired_device = "cuda:0" if (device or variant.device) == "gpu" else "cpu"
+            if runtime and runtime.state in ("loaded", "busy"):
+                if runtime.variant_id == variant.id and runtime.device == desired_device:
+                    runtime.last_used = time.monotonic()
+                    return runtime
+                if runtime.busy:
+                    raise ResourceError("MODEL_BUSY", "Нельзя сменить вариант модели во время выполнения задачи.")
+                self.unload(model_id, reason="variant-switch")
+            elif runtime and runtime.state in ("loading", "unloading"):
+                raise ResourceError("MODEL_TRANSITION", "Модель уже загружается или выгружается.")
+            if not restoring:
+                self._enforce_mode(model, variant)
             plan = self.plan(model_id, variant.id, device)
             if plan.verdict == "no" and not force:
                 raise ResourceError("INSUFFICIENT_RESOURCES", plan.reason, plan=plan.as_dict())
@@ -395,8 +433,20 @@ class ResourceManager:
                 vram = max(after, delta_gpu, torch_alloc)
             else:
                 vram = 0.0
+            actual_device = str(metrics.get("device") or runtime.device)
+            if plan.device == "gpu" and not actual_device.lower().startswith(("cuda", "gpu")):
+                logger.warning(
+                    "model %s requested GPU but worker reported %s; recording actual device",
+                    model_id, actual_device,
+                )
+                runtime.device = "cpu"
+                vram = 0.0
+            elif actual_device.lower().startswith(("cuda", "gpu")):
+                runtime.device = "cuda:0"
+            else:
+                runtime.device = "cpu"
             runtime.vram_mb = round(vram * 1024, 1)
-            runtime.ram_mb = float(metrics.get("ram_rss_mb") or metrics.get("ram_rss_mb") or 0.0)
+            runtime.ram_mb = float(metrics.get("ram_rss_mb") or 0.0)
             runtime.metrics = metrics
             runtime.state = "loaded"
             runtime.loaded_at = time.monotonic()
@@ -405,6 +455,13 @@ class ResourceManager:
             logger.info("loaded %s (%s) on %s, %.2f GB VRAM", model_id, variant.id, plan.device, vram)
             return runtime
         except Exception as exc:
+            # A worker can fail after its process has been created but before
+            # it reports READY. Always terminate it before dropping the runtime.
+            if runtime.worker is not None:
+                try:
+                    runtime.worker.kill()
+                except Exception:
+                    logger.exception("failed to terminate worker after load error: %s", model_id)
             with self._lock:
                 self._reserved_vram_gb = max(0.0, self._reserved_vram_gb - (plan.need_vram_gb if plan.device == "gpu" else 0.0))
                 self._reserved_ram_gb = max(0.0, self._reserved_ram_gb - (plan.need_ram_gb if plan.device == "cpu" else 0.0))
@@ -534,6 +591,8 @@ class ResourceManager:
             if not runtime:
                 raise ResourceError("MODEL_NOT_LOADED", "Модель не загружена.")
         with runtime.inference_lock:
+            if runtime.state == "unloading":
+                raise ResourceError("MODEL_UNLOADING", "Модель уже выгружается.")
             runtime.busy = True
             runtime.last_used = time.monotonic()
             try:
@@ -549,6 +608,18 @@ class ResourceManager:
                         retryable=True,
                         actions=["economy", "cpu", "retry"],
                     ) from exc
+                if exc.code in ("WORKER_TIMEOUT", "WORKER_DIED", "WORKER_DEAD", "WORKER_SEND_FAILED", "WORKER_STOP_TIMEOUT"):
+                    try:
+                        runtime.worker.kill()
+                    except Exception:
+                        logger.exception("failed to terminate broken worker: %s", model_id)
+                    with self._lock:
+                        if self._runtimes.get(model_id) is runtime:
+                            self._runtimes.pop(model_id, None)
+                    self._runtime_event(
+                        model_id, runtime.variant_id, "worker-failure", runtime.device,
+                        time.monotonic(), False, runtime.vram_mb, str(exc), pid=runtime.worker.pid,
+                    )
                 raise ResourceError(exc.code, str(exc), traceback=exc.traceback) from exc
             finally:
                 runtime.busy = False
@@ -560,29 +631,51 @@ class ResourceManager:
 
     # ---------------------------------------------------------------- unloading
     def unload(self, model_id: str, *, reason: str = "manual", force: bool = False) -> dict[str, Any]:
+        with self._lifecycle_lock:
+            return self._unload_locked(model_id, reason=reason, force=force)
+
+    def _unload_locked(self, model_id: str, *, reason: str = "manual", force: bool = False) -> dict[str, Any]:
+        acquired_inference_lock = False
         with self._lock:
             runtime = self._runtimes.get(model_id)
             if not runtime:
                 return {"unloaded": False}
             if runtime.state == "loading" and not force:
                 raise ResourceError("MODEL_LOADING", "Модель ещё загружается; дождитесь готовности.")
-            if runtime.busy and not force:
-                raise ResourceError("MODEL_BUSY", "Модель занята задачей; дождитесь завершения.")
+            if runtime.state == "unloading":
+                raise ResourceError("MODEL_UNLOADING", "Модель уже выгружается.")
+            if not force:
+                acquired_inference_lock = runtime.inference_lock.acquire(blocking=False)
+                if not acquired_inference_lock or runtime.busy:
+                    if acquired_inference_lock:
+                        runtime.inference_lock.release()
+                    raise ResourceError("MODEL_BUSY", "Модель занята задачей; дождитесь завершения.")
             runtime.state = "unloading"
         started = time.monotonic()
         before = self._mem()["gpu_used_gb"]
         worker = runtime.worker
-        if worker is not None:
-            try:
-                worker.unload()
-            except Exception:
-                logger.warning("worker unload failed", exc_info=True)
+        try:
+            if worker is not None:
                 try:
-                    worker.kill()
+                    worker.unload()
                 except Exception:
-                    pass
+                    logger.warning("graceful worker unload failed; forcing process termination", exc_info=True)
+                    worker.kill()
+                if worker.alive:
+                    raise ResourceError("WORKER_UNLOAD_FAILED", "Воркер остался запущенным после команды выгрузки.")
+        except Exception as exc:
+            with self._lock:
+                if self._runtimes.get(model_id) is runtime:
+                    runtime.state = "loaded"
+            if isinstance(exc, ResourceError):
+                raise
+            raise ResourceError("WORKER_UNLOAD_FAILED", f"Не удалось завершить процесс модели: {exc}") from exc
+        finally:
+            if acquired_inference_lock:
+                runtime.inference_lock.release()
         with self._lock:
-            self._runtimes.pop(model_id, None)
+            if self._runtimes.get(model_id) is runtime:
+                self._runtimes.pop(model_id, None)
         time.sleep(0.5)
         after = self._mem()["gpu_used_gb"]
         released = max(0.0, before - after)

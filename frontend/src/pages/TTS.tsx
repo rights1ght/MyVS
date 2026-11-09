@@ -22,6 +22,8 @@ export function TTSPage() {
   const [projectId, setProjectId] = useState("");
   const [text, setText] = useState("Привет! Это локальный синтез речи. Голос остаётся на этой машине.");
   const [voiceId, setVoiceId] = useState(params.get("voice") ?? "");
+  const [modelId, setModelId] = useState("");
+  const [variantId, setVariantId] = useState("");
   const [kind, setKind] = useState("builtin");
   const [language, setLanguage] = useState("ru");
   const [speed, setSpeed] = useState(1);
@@ -32,19 +34,34 @@ export function TTSPage() {
   const [submitting, setSubmitting] = useState(false);
   const { task, error: streamError, refresh } = useTaskStream(taskId);
 
+  const availableModels = [...(models.data ?? []), ...(cloneModels.data ?? [])]
+    .filter((item) => item.category === "tts" || item.category === "clone");
   const filtered = useMemo(() => allVoices.filter((voice) => {
+    if (modelId && voice.model_id !== modelId) return false;
     if (kind && voice.kind !== kind) return false;
     if (language && voice.language !== language) return false;
     return true;
-  }), [allVoices, kind, language]);
-  const selected = allVoices.find((voice) => voice.id === voiceId) ?? filtered[0] ?? null;
-  const model = [...(models.data ?? []), ...(cloneModels.data ?? [])].find((item) => item.id === selected?.model_id);
-  const installed = Boolean(model?.installed);
+  }), [allVoices, modelId, kind, language]);
+  const selected = allVoices.find((voice) => voice.id === voiceId && filtered.some((item) => item.id === voice.id)) ?? filtered[0] ?? null;
+  const activeModelId = modelId || selected?.model_id || "";
+  const model = availableModels.find((item) => item.id === activeModelId);
+  const availableVariants = model?.variants.filter((variant) => variant.install_state === "installed") ?? [];
+  const selectedVariant = availableVariants.find((variant) => variant.id === variantId) ?? availableVariants.find((variant) => variant.device === "gpu") ?? availableVariants[0] ?? null;
+  const installed = Boolean(model?.installed && selectedVariant);
   const isCloneOnly = model?.category === "clone";
 
   useEffect(() => {
-    if (!voiceId && filtered.length) setVoiceId(filtered[0].id);
+    if (!modelId && selected?.model_id) setModelId(selected.model_id);
+  }, [modelId, selected?.model_id]);
+
+  useEffect(() => {
+    if (filtered.length && !filtered.some((voice) => voice.id === voiceId)) setVoiceId(filtered[0].id);
+    if (!filtered.length && voiceId) setVoiceId("");
   }, [filtered, voiceId]);
+
+  useEffect(() => {
+    if (selectedVariant && selectedVariant.id !== variantId) setVariantId(selectedVariant.id);
+  }, [selectedVariant?.id, variantId]);
 
   useEffect(() => {
     const queryVoice = params.get("voice");
@@ -73,13 +90,14 @@ export function TTSPage() {
         body: JSON.stringify({
           text: preview ? "Привет! Так звучит этот голос в локальной студии." : text,
           voice_id: selected.id,
-          model_id: selected.model_id,
+          model_id: activeModelId,
+          variant_id: selectedVariant?.id,
           language: selected.language || language,
           speed,
           pitch,
           volume,
           project_id: projectId || null,
-          device: "gpu",
+          device: selectedVariant?.device ?? "gpu",
         }),
       });
       setTaskId(response.task_id);
@@ -133,7 +151,17 @@ export function TTSPage() {
 
         <div className="space-y-4">
           <Panel className="p-4">
-            <div className="mb-3 flex items-center justify-between"><div className="text-sm font-semibold">Голос</div><Badge>{filtered.length}</Badge></div>
+            <div className="mb-3 flex items-center justify-between"><div className="text-sm font-semibold">Движок и голос</div><Badge>{filtered.length}</Badge></div>
+            <label className="mb-3 block text-xs text-[var(--muted)]">TTS-модель
+              <select className="select mt-1" value={activeModelId} onChange={(event) => { setModelId(event.target.value); setVoiceId(""); setVariantId(""); }}>
+                {availableModels.map((item) => <option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed ? "" : " · не установлена"}</option>)}
+              </select>
+            </label>
+            <label className="mb-3 block text-xs text-[var(--muted)]">Вариант / устройство
+              <select className="select mt-1" value={selectedVariant?.id ?? ""} disabled={!availableVariants.length} onChange={(event) => setVariantId(event.target.value)}>
+                {availableVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label} · {variant.device.toUpperCase()} · {variant.precision}</option>)}
+              </select>
+            </label>
             <div className="mb-3 flex rounded-lg border border-[var(--border)] p-0.5 text-[11px]">
               {Object.entries(KIND_LABELS).map(([value, label]) => <button key={value} onClick={() => { setKind(value); setVoiceId(""); }} className={clsx("flex-1 rounded-md px-2 py-1.5", kind === value ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "text-[var(--muted)]")}>{label}</button>)}
             </div>

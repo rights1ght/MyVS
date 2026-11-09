@@ -23,7 +23,13 @@ class KokoroEngine(BaseEngine):
         from kokoro.model import KModel
 
         self.spec = spec
-        self.device = "cuda" if spec.get("device") == "gpu" and torch.cuda.is_available() else "cpu"
+        requested_gpu = spec.get("device") == "gpu"
+        if requested_gpu and not torch.cuda.is_available():
+            raise RuntimeError(
+                "Выбран GPU-вариант Kokoro, но CUDA недоступна в окружении TTS-worker. "
+                "Проверьте CUDA-сборку PyTorch и драйвер NVIDIA."
+            )
+        self.device = "cuda:0" if requested_gpu else "cpu"
         lang_code = str(spec.get("lang_code") or "a")
         path = Path(str(spec.get("model_path") or spec.get("repo") or "hexgrad/Kokoro-82M"))
         started = time.perf_counter()
