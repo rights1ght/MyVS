@@ -46,7 +46,7 @@ export function TTSPage() {
   const activeModelId = modelId || selected?.model_id || "";
   const model = availableModels.find((item) => item.id === activeModelId);
   const availableVariants = model?.variants.filter((variant) => variant.install_state === "installed") ?? [];
-  const selectedVariant = availableVariants.find((variant) => variant.id === variantId) ?? availableVariants[0] ?? null;
+  const selectedVariant = availableVariants.find((variant) => variant.id === variantId) ?? availableVariants.find((variant) => variant.device === "gpu") ?? availableVariants[0] ?? null;
   const installed = Boolean(model?.installed && selectedVariant);
   const isCloneOnly = model?.category === "clone";
 
