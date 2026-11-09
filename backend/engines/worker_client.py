@@ -238,7 +238,12 @@ class WorkerClient:
     def infer(self, payload: dict[str, Any], on_progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         # Each TTS/STT request is bounded. A stuck native runtime must not keep
         # a worker and its GPU allocation alive indefinitely.
-        return self.call("infer", payload, timeout=600.0, on_progress=on_progress)
+        try:
+            return self.call("infer", payload, timeout=600.0, on_progress=on_progress)
+        except WorkerError as exc:
+            if exc.code == "WORKER_TIMEOUT":
+                self.kill()
+            raise
 
     def ping(self) -> dict[str, Any]:
         return self.call("ping", timeout=10.0)
