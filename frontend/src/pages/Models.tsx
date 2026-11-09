@@ -159,8 +159,8 @@ export function ModelsPage() {
       setPlan(null);
       return;
     }
-    if (choice === "evict") {
-      const option = plan.plan.options.find((item) => item.id === "evict");
+    if (choice.startsWith("evict:")) {
+      const option = plan.plan.options.find((item) => item.id === choice);
       if (option?.model_id) {
         await api("/api/resources/evict", { method: "POST", body: JSON.stringify({ model_id: option.model_id }) });
       }
@@ -169,7 +169,7 @@ export function ModelsPage() {
       await load(model, undefined, { variantId: plan.plan.variant_id, device: plan.plan.device });
       return;
     }
-    if (choice === "cpu" || choice === "quant") {
+    if (choice.startsWith("cpu:") || choice.startsWith("quant:")) {
       const option = plan.plan.options.find((item) => item.id === choice);
       if (option?.variant_id) {
         const model = plan.model;
@@ -270,7 +270,7 @@ export function ModelsPage() {
                 {defaultVariant && !defaultVariant.install_state.startsWith("installed") ? (
                   <button className="btn-primary" disabled={busy === `download:${defaultVariant.id}`} onClick={() => startDownload(model, defaultVariant)}><Download size={14} /> {defaultVariant.install_state === "paused" ? "Продолжить" : "Скачать"}</button>
                 ) : loaded ? (
-                  <button className="btn" onClick={() => api(`/api/models/${model.id}/unload`, { method: "POST" }).then(refresh)}><Zap size={14} /> Выгрузить</button>
+                  <button className="btn" onClick={() => api(`/api/models/${model.id}/unload`, { method: "POST" }).then(refresh).catch((err) => setError((err as Error).message))}><Zap size={14} /> Выгрузить</button>
                 ) : (
                   <button className="btn-primary" disabled={busy === `load:${model.id}`} onClick={() => defaultVariant && load(model, defaultVariant)}><Play size={14} /> Загрузить</button>
                 )}
