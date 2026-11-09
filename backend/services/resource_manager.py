@@ -433,8 +433,20 @@ class ResourceManager:
                 vram = max(after, delta_gpu, torch_alloc)
             else:
                 vram = 0.0
+            actual_device = str(metrics.get("device") or runtime.device)
+            if plan.device == "gpu" and not actual_device.lower().startswith(("cuda", "gpu")):
+                logger.warning(
+                    "model %s requested GPU but worker reported %s; recording actual device",
+                    model_id, actual_device,
+                )
+                runtime.device = "cpu"
+                vram = 0.0
+            elif actual_device.lower().startswith(("cuda", "gpu")):
+                runtime.device = "cuda:0"
+            else:
+                runtime.device = "cpu"
             runtime.vram_mb = round(vram * 1024, 1)
-            runtime.ram_mb = float(metrics.get("ram_rss_mb") or metrics.get("ram_rss_mb") or 0.0)
+            runtime.ram_mb = float(metrics.get("ram_rss_mb") or 0.0)
             runtime.metrics = metrics
             runtime.state = "loaded"
             runtime.loaded_at = time.monotonic()
@@ -443,6 +455,13 @@ class ResourceManager:
             logger.info("loaded %s (%s) on %s, %.2f GB VRAM", model_id, variant.id, plan.device, vram)
             return runtime
         except Exception as exc:
+            # A worker can fail after its process has been created but before
+            # it reports READY. Always terminate it before dropping the runtime.
+            if runtime.worker is not None:
+                try:
+                    runtime.worker.kill()
+                except Exception:
+                    logger.exception("failed to terminate worker after load error: %s", model_id)
             with self._lock:
                 self._reserved_vram_gb = max(0.0, self._reserved_vram_gb - (plan.need_vram_gb if plan.device == "gpu" else 0.0))
                 self._reserved_ram_gb = max(0.0, self._reserved_ram_gb - (plan.need_ram_gb if plan.device == "cpu" else 0.0))
@@ -589,6 +608,18 @@ class ResourceManager:
                         retryable=True,
                         actions=["economy", "cpu", "retry"],
                     ) from exc
+                if exc.code in ("WORKER_TIMEOUT", "WORKER_DIED", "WORKER_DEAD", "WORKER_SEND_FAILED"):
+                    try:
+                        runtime.worker.kill()
+                    except Exception:
+                        logger.exception("failed to terminate broken worker: %s", model_id)
+                    with self._lock:
+                        if self._runtimes.get(model_id) is runtime:
+                            self._runtimes.pop(model_id, None)
+                    self._runtime_event(
+                        model_id, runtime.variant_id, "worker-failure", runtime.device,
+                        time.monotonic(), False, runtime.vram_mb, str(exc), pid=runtime.worker.pid,
+                    )
                 raise ResourceError(exc.code, str(exc), traceback=exc.traceback) from exc
             finally:
                 runtime.busy = False
