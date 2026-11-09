@@ -153,6 +153,7 @@ def main() -> int:
         "backend.main:app",
         host=args.host,
         port=args.port,
+        reload=args.dev,
         log_level="info",
         access_log=False,
     )
