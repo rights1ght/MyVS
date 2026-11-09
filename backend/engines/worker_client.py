@@ -242,7 +242,10 @@ class WorkerClient:
             return self.call("infer", payload, timeout=600.0, on_progress=on_progress)
         except WorkerError as exc:
             if exc.code == "WORKER_TIMEOUT":
-                self.kill()
+                try:
+                    self.kill()
+                except Exception:
+                    logger.exception("failed to terminate timed-out worker")
             raise
 
     def ping(self) -> dict[str, Any]:
