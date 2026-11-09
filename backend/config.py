@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     frontend_dist: Path = ROOT_DIR / "frontend" / "dist"
     models_yaml: Path = ROOT_DIR / "backend" / "models.yaml"
     user_models_yaml: Path = ROOT_DIR / "data" / "user_models.yaml"
-    hf_cache: Path = Path(os.environ.get("HF_HOME", ROOT_DIR / "data" / "models" / "hf-cache"))
+    # Keep MyVS model cache isolated from other apps (e.g. OmniVoice) that may set HF_HOME globally.
+    # Override only with MYVS_HF_HOME when a custom cache location is required.
+    hf_cache: Path = Path(os.environ.get("MYVS_HF_HOME", ROOT_DIR / "data" / "models" / "hf-cache"))
 
     reserve_vram_gb: float = 0.8
     reserve_ram_gb: float = 3.0
