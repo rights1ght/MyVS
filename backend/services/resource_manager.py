@@ -608,7 +608,7 @@ class ResourceManager:
                         retryable=True,
                         actions=["economy", "cpu", "retry"],
                     ) from exc
-                if exc.code in ("WORKER_TIMEOUT", "WORKER_DIED", "WORKER_DEAD", "WORKER_SEND_FAILED"):
+                if exc.code in ("WORKER_TIMEOUT", "WORKER_DIED", "WORKER_DEAD", "WORKER_SEND_FAILED", "WORKER_STOP_TIMEOUT"):
                     try:
                         runtime.worker.kill()
                     except Exception:
