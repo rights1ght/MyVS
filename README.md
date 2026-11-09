@@ -37,6 +37,16 @@ python run.py
 устанавливает Python-зависимости, собирает frontend и запускает uvicorn. При
 повторных запусках установка пропускается.
 
+Кэш Hugging Face по умолчанию хранится отдельно в `data/models/hf-cache`.
+Переменная окружения `HF_HOME`, заданная для других приложений, не меняет
+путь кэша MyVS. Для собственного расположения задайте `MYVS_HF_HOME`, например
+в PowerShell перед запуском:
+
+```powershell
+$env:MYVS_HF_HOME = "D:\\AI\\MyVS-HF-Cache"
+python run.py
+```
+
 Полезные флаги:
 
 ```bash
