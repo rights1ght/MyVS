@@ -14,6 +14,7 @@ from backend.services.settings_service import (
     list_profiles,
     update_profile,
     update_settings,
+    SettingsError,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -29,7 +30,10 @@ def get_all() -> dict[str, Any]:
 
 @router.put("")
 def put_all(payload: dict[str, Any]) -> dict[str, Any]:
-    values = update_settings(payload)
+    try:
+        values = update_settings(payload)
+    except SettingsError as exc:
+        raise AppError("SETTINGS_INVALID", str(exc), 422) from exc
     resources.refresh_settings()
     return {"values": values, "profiles": [profile.model_dump() for profile in list_profiles()]}
 

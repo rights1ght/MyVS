@@ -12,7 +12,7 @@ from fastapi import UploadFile
 from sqlmodel import select
 
 from backend.config import settings
-from backend.db.models import TaskRecord, Voice
+from backend.db.models import TaskRecord, Voice, VoiceCache
 from backend.db.session import session_scope
 from backend.services import audio as audio_service
 
@@ -117,7 +117,11 @@ def create_cloned_voice(
     folder.mkdir(parents=True, exist_ok=True)
     suffix = Path(upload.filename or "reference.wav").suffix or ".wav"
     original = folder / f"reference_original{suffix}"
-    save_upload(upload, original, max_mb=100)
+    try:
+        save_upload(upload, original, max_mb=100)
+    except Exception:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
     reference = folder / "reference.wav"
     try:
         audio_service.decode_to_wav(original, reference, sample_rate=24000, mono=True)
@@ -203,13 +207,18 @@ def delete_voice(voice_id: str) -> bool:
         return False
     if voice.kind == "builtin":
         raise ValueError("Встроенные голоса нельзя удалить.")
-    if voice.reference_path:
-        shutil.rmtree(Path(voice.reference_path).parent, ignore_errors=True)
     with session_scope() as session:
         row = session.get(Voice, voice_id)
         if row:
             for task in session.exec(select(TaskRecord).where(TaskRecord.voice_id == voice_id)).all():
                 task.voice_id = None
                 session.add(task)
+            # voice_cache.voice_id is a foreign key (PRAGMA foreign_keys=ON)
+            for cached in session.exec(select(VoiceCache).where(VoiceCache.voice_id == voice_id)).all():
+                session.delete(cached)
+            session.flush()  # children first: without relationship() SQLAlchemy does not order these deletes
             session.delete(row)
+    # Remove files only after the DB change succeeded, so a failed delete cannot leave a voice without its reference.
+    if voice.reference_path:
+        shutil.rmtree(Path(voice.reference_path).parent, ignore_errors=True)
     return True

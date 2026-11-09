@@ -16,10 +16,10 @@ export function ResourceDecision({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (!plan || task.status !== "awaiting_decision") return null;
-  const evictOptions = plan.options.filter((option) => option.id === "evict");
-  const cpuOption = plan.options.find((option) => option.id === "cpu");
-  const quantOption = plan.options.find((option) => option.id === "quant");
-  const selectedEvict = evictOptions.find((option) => option.model_id === plan.options.find((item) => item.id === "evict")?.model_id) ?? evictOptions[0];
+  // The backend emits unique ids such as "evict:<model>" / "cpu:<variant>"; the kind is in `action`.
+  const evictOptions = plan.options.filter((option) => option.action === "evict");
+  const cpuOption = plan.options.find((option) => option.action === "cpu");
+  const quantOption = plan.options.find((option) => option.action === "quant");
 
   const resolve = async (value: string, extra: { model_id?: string; variant_id?: string } = {}) => {
     setBusy(true);

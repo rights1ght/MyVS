@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import fnmatch
 import importlib.util
 import logging
+import re
 import os
 from pathlib import Path
 from typing import Any
@@ -10,7 +12,7 @@ import yaml
 from sqlmodel import Session, desc, select
 
 from backend.config import settings
-from backend.db.models import ModelMeasurement, ModelRecord, ModelVariant
+from backend.db.models import ModelMeasurement, ModelRecord, ModelVariant, Voice
 from backend.db.session import session_scope
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,38 @@ def package_available(package: str) -> bool:
         python = root / ".venvs" / env / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         return python.exists()
     return False
+
+
+CUSTOM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def complete_hf_snapshot(cache_root: Path, download: dict[str, Any]) -> Path | None:
+    """Return a usable snapshot folder of an existing Hugging Face cache entry, or None.
+
+    A bare ``snapshots/<hash>`` directory is not proof of an install: an interrupted download
+    leaves an empty or partial snapshot (and ``blobs/*.incomplete``). The pinned revision is
+    preferred; every file the catalog asks for (``include``) must be present.
+    """
+    snapshots = cache_root / "snapshots"
+    if not snapshots.is_dir():
+        return None
+    blobs = cache_root / "blobs"
+    if blobs.is_dir() and any(blobs.glob("*.incomplete")):
+        return None
+    revision = str(download.get("revision") or "")
+    if revision and (snapshots / revision).is_dir():
+        candidates = [snapshots / revision]
+    else:
+        candidates = sorted(p for p in snapshots.iterdir() if p.is_dir())
+    include = list(download.get("include") or [])
+    for snapshot in reversed(candidates):
+        files = [p.relative_to(snapshot).as_posix() for p in snapshot.rglob("*") if p.is_file()]  # skips dangling symlinks
+        if not files:
+            continue
+        if include and not all(any(fnmatch.fnmatch(name, pattern) for name in files) for pattern in include):
+            continue
+        return snapshot
+    return None
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -154,24 +188,35 @@ class ModelRegistry:
                         # Reuse an existing Hugging Face cache when the whole repo is already there.
                         repo = str(download.get("repo") or "")
                         if repo and variant.install_state == "not_installed":
-                            cache_folder = settings.hf_cache / f"models--{repo.replace('/', '--')}" / "snapshots"
-                            snapshots = sorted(cache_folder.glob("*")) if cache_folder.exists() else []
-                            if snapshots:
+                            snapshot = complete_hf_snapshot(settings.hf_cache / f"models--{repo.replace('/', '--')}", download)
+                            if snapshot:
                                 variant.install_state = "installed"
-                                variant.install_path = str(snapshots[-1])
+                                variant.install_path = str(snapshot)
                     elif download.get("type") == "local":
                         path = Path(str(download.get("path") or ""))
                         variant.install_path = str(path)
                         if path.exists() and variant.install_state != "downloading":
                             variant.install_state = "installed"
                     session.add(variant)
-        # Remove catalog variants that no longer exist in YAML, but keep custom models.
+        # Drop variants that are no longer in the catalog (user models live in the catalog too, so a
+        # removed custom model loses its variants as well). Downloaded files stay on disk.
         known_ids = {f"{mid}:{v.get('id', 'default')}" for mid, spec in self.catalog.items() for v in spec.get("variants", [])}
         with session_scope() as session:
             for variant in session.exec(select(ModelVariant)).all():
-                if variant.id not in known_ids and not variant.id.split(":", 1)[0].startswith("custom-"):
-                    # Preserve downloaded artifacts on disk, only hide the row.
+                if variant.id not in known_ids:
                     session.delete(variant)
+            session.flush()
+            # Removed *custom* models also lose their record (unless a voice still references it).
+            # Stale catalog records are left alone: deleting them could break foreign keys at startup.
+            for record in session.exec(select(ModelRecord).where(ModelRecord.is_custom == True)).all():  # noqa: E712
+                if record.id in self.catalog:
+                    continue
+                if session.exec(select(Voice.id).where(Voice.model_id == record.id)).first():
+                    continue
+                for measurement in session.exec(select(ModelMeasurement).where(ModelMeasurement.model_id == record.id)).all():
+                    session.delete(measurement)
+                session.flush()
+                session.delete(record)
 
     def all(self, category: str | None = None) -> list[ModelRecord]:
         with session_scope() as session:
@@ -198,6 +243,16 @@ class ModelRegistry:
                     return variant
             return None
         return variants[0]
+
+    def resolve_variant(self, model_id: str, variant_id: str | None = None) -> ModelVariant | None:
+        """The variant a caller asked for, or - when none was named - the best *installed* one.
+
+        ``get_variant(model_id, None)`` simply returns the first catalog entry (usually the GPU
+        build), which made tasks fail with MODEL_NOT_INSTALLED on CPU-only installs.
+        """
+        if variant_id:
+            return self.get_variant(model_id, variant_id)
+        return self.default_variant(model_id)
 
     def default_variant(self, model_id: str) -> ModelVariant | None:
         variants = self.variants(model_id)
@@ -236,6 +291,9 @@ class ModelRegistry:
         }
 
     def remove_custom(self, model_id: str) -> bool:
+        with session_scope() as session:
+            if session.exec(select(Voice.id).where(Voice.model_id == model_id)).first():
+                raise ValueError("Есть голоса, использующие эту модель. Сначала удалите их.")
         data = _read_yaml(settings.user_models_yaml)
         models = list(data.get("models") or [])
         filtered = [item for item in models if str(item.get("id")) != model_id]
@@ -251,6 +309,9 @@ class ModelRegistry:
         model_id = str(payload.get("id") or "").strip()
         if not model_id:
             raise ValueError("id is required")
+        if not CUSTOM_ID_RE.match(model_id):
+            # the id becomes a folder name under data/models and part of variant ids
+            raise ValueError("id: допустимы латиница, цифры, '.', '_' и '-' (до 64 символов), без слэшей.")
         if model_id in self.catalog:
             raise ValueError("model id already exists")
         if payload.get("adapter") not in KNOWN_ADAPTERS:

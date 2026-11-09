@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import select
 
 from backend.api.errors import AppError
@@ -18,6 +18,14 @@ class ProjectPayload(BaseModel):
     name: str
     description: str = ""
     color: str = "#f5b942"
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
 
 
 @router.get("")
@@ -57,6 +65,8 @@ def delete_project(project_id: str) -> dict[str, bool]:
         project = session.get(Project, project_id)
         if not project:
             raise AppError("PROJECT_NOT_FOUND", "Проект не найден.", 404)
+        if len(session.exec(select(Project.id)).all()) <= 1:
+            raise AppError("PROJECT_PROTECTED", "Нельзя удалить последний проект.", 400)
         # Keep task history; move it out of the project before deleting.
         for task in session.exec(select(TaskRecord).where(TaskRecord.project_id == project_id)).all():
             task.project_id = None

@@ -32,6 +32,12 @@ def _now() -> float:
     return time.monotonic()
 
 
+def _param_float(params: dict[str, Any], key: str, default: float) -> float:
+    """Numeric task parameter where 0 is a legitimate value (e.g. volume=0)."""
+    value = params.get(key)
+    return default if value is None else float(value)
+
+
 def _task_public(task: TaskRecord) -> dict[str, Any]:
     return {
         **task.model_dump(),
@@ -91,7 +97,12 @@ class TaskService:
 
     def start(self) -> None:
         if self._dispatcher and self._dispatcher.is_alive():
-            return
+            if not self._stop.is_set():
+                return
+            # stop() was called but the old dispatcher has not noticed yet (it polls every 0.5 s);
+            # wait for it, otherwise it would exit right after we clear the flag and nothing would dispatch.
+            self._dispatcher.join(timeout=3)
+        self._stop.clear()  # allow start() after stop() (lifespan restart, tests)
         self.recover()
         self._dispatcher = threading.Thread(target=self._dispatch, name="myvs-dispatcher", daemon=True)
         self._dispatcher.start()
@@ -225,9 +236,7 @@ class TaskService:
         model = registry.get(model_id)
         if not model:
             raise ResourceError("MODEL_NOT_FOUND", "Модель не найдена.")
-        variant = registry.get_variant(model_id, task.params.get("variant_id") if task.params else None)
-        if not variant:
-            variant = registry.default_variant(model_id)
+        variant = registry.resolve_variant(model_id, task.params.get("variant_id") if task.params else None)
         if not variant or variant.install_state != "installed":
             raise ResourceError(
                 "MODEL_NOT_INSTALLED",
@@ -272,7 +281,7 @@ class TaskService:
             self.cancel(task_id)
             return self.get(task_id)
         if choice == "evict":
-            target = model_id or next((opt.get("model_id") for opt in plan.get("options", []) if opt.get("id") == "evict"), "")
+            target = model_id or next((opt.get("model_id") for opt in plan.get("options", []) if opt.get("action") == "evict"), "")
             if target:
                 resources.unload(target, reason="task-decision")
         elif choice == "cpu":
@@ -575,9 +584,9 @@ class TaskService:
             raise ResourceError("EMPTY_TEXT", "Текст для синтеза пуст.")
         voice_payload = self._voice_payload(task)
         language = task.language or params.get("language") or "ru"
-        speed = float(params.get("speed") or 1.0)
-        pitch = float(params.get("pitch") or 0.0)
-        volume = float(params.get("volume") or 1.0)
+        speed = _param_float(params, "speed", 1.0)
+        pitch = _param_float(params, "pitch", 0.0)
+        volume = _param_float(params, "volume", 1.0)
         chunk_results: list[dict[str, Any]] = []
         infer_seconds = 0.0
         sample_rate = 24000
@@ -634,9 +643,9 @@ class TaskService:
         info = audio_service.postprocess_audio(
             output_path,
             processed,
-            speed=float(params.get("speed") or 1.0),
-            pitch_semitones=float(params.get("pitch") or 0.0),
-            volume=float(params.get("volume") or 1.0),
+            speed=_param_float(params, "speed", 1.0),
+            pitch_semitones=_param_float(params, "pitch", 0.0),
+            volume=_param_float(params, "volume", 1.0),
             speed_already_applied=result.get("chunk_results", [{}])[-1].get("speed_applied", False) if result.get("chunk_results") else False,
         )
         if processed.exists():

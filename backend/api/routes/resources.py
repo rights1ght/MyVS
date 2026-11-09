@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from backend.api.errors import AppError
 from backend.services.resource_manager import ResourceError, resources
+from backend.services.settings_service import update_settings
 
 router = APIRouter(prefix="/api/resources", tags=["resources"])
 
@@ -74,4 +75,6 @@ def set_mode(payload: ModePayload) -> dict[str, Any]:
         resources.set_mode(payload.mode)
     except ResourceError as exc:
         raise AppError(exc.code, str(exc), 400) from exc
+    # Persist, otherwise the idle watcher's refresh_settings() reverts the mode within 15 s.
+    update_settings({"resource_mode": payload.mode})
     return resources.status()
