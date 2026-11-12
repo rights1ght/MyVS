@@ -17,12 +17,13 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatBytes, formatMb } from "../api/client";
 import type { DownloadInfo, ModelInfo, ModelVariantInfo, ResourcePlan } from "../api/types";
 import { Modal } from "../components/Modal";
 import { Badge, EmptyState, ErrorBox, MetricBar, PageHeader, Panel } from "../components/ui";
 import { useAsync } from "../hooks/useAsync";
+import { usePolling } from "../hooks/usePolling";
 
 const CATEGORIES = [
   { id: "", label: "Все" },
@@ -76,24 +77,29 @@ export function ModelsPage() {
     resources.reload();
   };
 
+  const mountedRef = useRef(true);
+  const seenStatus = useRef<Map<string, string>>(new Map());
+  const tick = () => {
+    api<DownloadInfo[]>("/api/downloads")
+      .then((rows) => {
+        if (!mountedRef.current) return;
+        setDownloads(rows);
+        // Reload the catalogue only when a download *just* completed. Old completed rows stay in the
+        // list forever, so the previous `rows.some(completed)` re-fetched /api/models every 1.5 s.
+        const justCompleted = rows.some((row) => row.status === "completed" && seenStatus.current.has(row.id) && seenStatus.current.get(row.id) !== "completed");
+        seenStatus.current = new Map(rows.map((row) => [row.id, row.status]));
+        if (justCompleted) refresh();
+      })
+      .catch(() => undefined);
+  };
   useEffect(() => {
-    let mounted = true;
-    const tick = () => {
-      api<DownloadInfo[]>("/api/downloads")
-        .then((rows) => {
-          if (!mounted) return;
-          setDownloads(rows);
-          if (rows.some((row) => row.status === "completed")) refresh();
-        })
-        .catch(() => undefined);
-    };
+    mountedRef.current = true;
     tick();
-    const timer = window.setInterval(tick, 1500);
     return () => {
-      mounted = false;
-      window.clearInterval(timer);
+      mountedRef.current = false;
     };
   }, []);
+  usePolling(tick, 1500);
 
   const loadedIds = new Set((resources.data?.loaded ?? []).map((item) => item.model_id));
   const list = useMemo(() => {

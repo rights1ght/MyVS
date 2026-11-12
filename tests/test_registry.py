@@ -149,4 +149,5 @@ def test_model_list_filters(client) -> None:
     assert client.get("/api/models", params={"q": "whisper"}).json()
     assert client.get("/api/models", params={"installed": True, "category": "stt"}).json() == []
     assert client.get("/api/models/missing").status_code == 404
-    assert client.get(f"/api/models/{TINY}/measurements").json() == []
+    measurements = client.get(f"/api/models/{TINY}/measurements").json()  # other tests may have loaded the model
+    assert isinstance(measurements, list) and all(m["model_id"] == TINY for m in measurements)

@@ -81,6 +81,7 @@ def postprocess_audio(
     pitch_semitones: float = 0.0,
     volume: float = 1.0,
     speed_already_applied: bool = False,
+    copy_if_unchanged: bool = True,
 ) -> dict[str, Any]:
     source = Path(source)
     target = Path(target)
@@ -89,8 +90,11 @@ def postprocess_audio(
     speed = max(0.25, min(1.0 if speed is None else float(speed), 4.0))
     pitch_semitones = max(-12.0, min(0.0 if pitch_semitones is None else float(pitch_semitones), 12.0))
     volume = max(0.0, min(1.0 if volume is None else float(volume), 2.0))
-    if abs(speed - 1.0) < 0.001 and abs(pitch_semitones) < 0.01 and abs(volume - 1.0) < 0.001:
-        if source.resolve() != target.resolve():
+    # When the engine already applied the speed there is nothing left to do for it. Checking the raw
+    # speed here used to launch an ffmpeg "anull" re-encode for every task with speed != 1.
+    effective_speed = 1.0 if speed_already_applied else speed
+    if abs(effective_speed - 1.0) < 0.001 and abs(pitch_semitones) < 0.01 and abs(volume - 1.0) < 0.001:
+        if copy_if_unchanged and source.resolve() != target.resolve():
             shutil.copy2(source, target)
         return {"applied": False}
     info = sf.info(str(source))

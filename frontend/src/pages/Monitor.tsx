@@ -1,12 +1,13 @@
 import clsx from "clsx";
 import { Activity, Check, Cpu, Eraser, Gauge, HardDrive, MemoryStick, Thermometer, TriangleAlert, Zap } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatMb } from "../api/client";
 import type { AlertInfo, Snapshot } from "../api/types";
 import { Modal } from "../components/Modal";
 import { Sparkline } from "../components/Sparkline";
 import { Badge, EmptyState, ErrorBox, MetricBar, PageHeader, Panel } from "../components/ui";
 import { useAsync } from "../hooks/useAsync";
+import { usePolling } from "../hooks/usePolling";
 import { useMonitorStore } from "../store/monitor";
 
 function Stat({
@@ -56,14 +57,22 @@ export function MonitorPage() {
   const gpuSeries = data.map((item) => item.gpu.util ?? 0);
   const diskSeries = data.map((item) => item.disk.read_mb_s + item.disk.write_mb_s);
 
+  const lastSeq = useRef(0);
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      api<Snapshot[]>("/api/monitor/history?seconds=300").then(history.setData).catch(() => undefined);
-      api<AlertInfo[]>("/api/monitor/alerts?limit=50").then(alerts.setData).catch(() => undefined);
-    }, 2000);
-    return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const last = history.data?.[history.data.length - 1]?.seq ?? 0;
+    if (last > lastSeq.current) lastSeq.current = last;
+  }, [history.data]);
+  usePolling(() => {
+    // Only fetch samples we have not seen (the full 300-sample window is ~170 KB).
+    api<Snapshot[]>(`/api/monitor/history?seconds=300&after=${lastSeq.current}`)
+      .then((fresh) => {
+        if (!fresh.length) return;
+        lastSeq.current = fresh[fresh.length - 1].seq;
+        history.setData((previous) => [...(previous ?? []), ...fresh].slice(-300));
+      })
+      .catch(() => undefined);
+    api<AlertInfo[]>("/api/monitor/alerts?limit=50").then(alerts.setData).catch(() => undefined);
+  }, 2000);
 
   const acknowledge = async (id: string) => {
     await api(`/api/monitor/alerts/${id}/ack`, { method: "POST" });

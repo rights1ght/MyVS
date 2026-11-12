@@ -1,14 +1,36 @@
 from __future__ import annotations
 
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
 
-import soundfile as sf
+import numpy as np
 
 from backend.engines.base import BaseEngine, gpu_memory_mb
+
+
+def decode_audio_16k(path: str) -> np.ndarray:
+    """Mono float32 samples at 16 kHz.
+
+    Uses faster-whisper's own in-process decoder (PyAV) and falls back to an ffmpeg pipe. Both avoid
+    the old "ffmpeg -> temp WAV on disk -> soundfile" round trip, which cost an extra process spawn
+    plus writing and re-reading the whole decoded file (hundreds of MB for hour-long audio).
+    """
+    try:
+        from faster_whisper.audio import decode_audio
+
+        return np.asarray(decode_audio(path, sampling_rate=16000), dtype=np.float32)
+    except Exception:  # missing PyAV, exotic container, ... -> let ffmpeg try
+        import imageio_ffmpeg
+
+        completed = subprocess.run(
+            [imageio_ffmpeg.get_ffmpeg_exe(), "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        return np.frombuffer(completed.stdout, dtype=np.float32).copy()
 
 
 class FasterWhisperEngine(BaseEngine):
@@ -59,25 +81,11 @@ class FasterWhisperEngine(BaseEngine):
         return {"warmed": True, "warmup_seconds": round(time.perf_counter() - started, 3)}
 
     def infer(self, payload: dict[str, Any], progress: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-        import imageio_ffmpeg
-
         audio_path = str(payload["audio_path"])
         if not Path(audio_path).exists():
             raise FileNotFoundError(audio_path)
         started = time.perf_counter()
-        with tempfile.TemporaryDirectory(prefix="myvs-stt-") as tmp:
-            wav_path = Path(tmp) / "audio.wav"
-            subprocess.run(
-                [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-i", audio_path, "-ac", "1", "-ar", "16000", str(wav_path)],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
-            audio, sample_rate = sf.read(wav_path, dtype="float32")
-        if getattr(audio, "ndim", 1) > 1:
-            audio = audio.mean(axis=1)
-        if sample_rate != 16000:
-            raise RuntimeError(f"Ожидалась частота 16000 Гц, получено {sample_rate}.")
+        audio = decode_audio_16k(audio_path)
         duration = len(audio) / 16000.0
         language = payload.get("language") or None
         if language == "auto":

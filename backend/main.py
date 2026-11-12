@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -100,6 +101,26 @@ async def lifespan(_app: FastAPI):
         resources.stop()
 
 
+class SelectiveGZipMiddleware:
+    """GZip for JSON/text/static assets, but never for audio.
+
+    Audio is streamed with Range support (``<audio>`` seeking); compressing it would break partial
+    responses and gains nothing on already-dense WAV/MP3 payloads.
+    """
+
+    SKIP_SUFFIXES = ("/audio", "/reference")
+
+    def __init__(self, app, minimum_size: int = 1024) -> None:  # type: ignore[no-untyped-def]
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=minimum_size, compresslevel=4)  # level 9 (default) is ~5x slower for little gain
+
+    async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
+        if scope["type"] == "http" and scope["path"].endswith(self.SKIP_SUFFIXES):
+            await self.app(scope, receive, send)
+        else:
+            await self.gzip(scope, receive, send)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="MyVS API",
@@ -115,6 +136,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024)
     for router in (
         system_routes.router,
         monitor_routes.router,

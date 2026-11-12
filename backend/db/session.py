@@ -15,7 +15,6 @@ settings.ensure_dirs()
 engine = create_engine(
     f"sqlite:///{settings.db_path.as_posix()}",
     connect_args={"check_same_thread": False, "timeout": 30},
-    pool_pre_ping=True,
 )
 
 
@@ -23,6 +22,11 @@ engine = create_engine(
 def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # type: ignore[no-untyped-def]
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
+    # WAL + synchronous=NORMAL is crash-safe for the database file (only the last commits can be
+    # lost on power failure) and avoids an fsync on every commit; the queue/event code commits a lot.
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA cache_size=-32768")  # 32 MiB page cache per connection
+    cursor.execute("PRAGMA temp_store=MEMORY")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA busy_timeout=30000")
     cursor.close()

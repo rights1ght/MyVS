@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from sqlmodel import Session, desc, select
+from sqlmodel import Session, desc, func, select
 
 from backend.config import settings
 from backend.db.models import ModelMeasurement, ModelRecord, ModelVariant, Voice
@@ -271,24 +271,53 @@ class ModelRegistry:
                 .limit(1)
             ).first()
 
+    def public_many(self, models: list[ModelRecord]) -> list[dict[str, Any]]:
+        """Public payloads for many models using three queries (models list, variants, latest measurements).
+
+        The per-model version issued ~5 queries for every model, so the model catalogue cost
+        ~70 SQL round trips per request.
+        """
+        if not models:
+            return []
+        ids = [model.id for model in models]
+        with session_scope() as session:
+            variants = session.exec(select(ModelVariant).where(ModelVariant.model_id.in_(ids))).all()
+            newest = (
+                select(ModelMeasurement.variant_id.label("variant_id"), func.max(ModelMeasurement.measured_at).label("measured_at"))
+                .where(ModelMeasurement.model_id.in_(ids))
+                .group_by(ModelMeasurement.variant_id)
+                .subquery()
+            )
+            measurements = session.exec(
+                select(ModelMeasurement).join(
+                    newest,
+                    (ModelMeasurement.variant_id == newest.c.variant_id) & (ModelMeasurement.measured_at == newest.c.measured_at),
+                )
+            ).all()
+        latest = {item.variant_id: item for item in measurements}
+        by_model: dict[str, list[ModelVariant]] = {model_id: [] for model_id in ids}
+        for variant in variants:
+            by_model.setdefault(variant.model_id, []).append(variant)
+        result = []
+        for model in models:
+            rows = by_model.get(model.id, [])
+            result.append(
+                {
+                    **model.model_dump(),
+                    "variants": [
+                        {**variant.model_dump(), "measurement": latest[variant.id].model_dump() if variant.id in latest else None}
+                        for variant in rows
+                    ],
+                    "installed": any(variant.install_state == "installed" for variant in rows),
+                }
+            )
+        return result
+
     def model_public(self, model_id: str) -> dict[str, Any] | None:
         model = self.get(model_id)
         if not model:
             return None
-        variants = []
-        for variant in self.variants(model_id):
-            measurement = self.latest_measurement(model_id, variant.id)
-            variants.append(
-                {
-                    **variant.model_dump(),
-                    "measurement": measurement.model_dump() if measurement else None,
-                }
-            )
-        return {
-            **model.model_dump(),
-            "variants": variants,
-            "installed": any(v.install_state == "installed" for v in self.variants(model_id)),
-        }
+        return self.public_many([model])[0]
 
     def remove_custom(self, model_id: str) -> bool:
         with session_scope() as session:

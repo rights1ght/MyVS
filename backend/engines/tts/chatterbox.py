@@ -35,7 +35,38 @@ LANG_MAP = {
 }
 
 
-class ChatterboxEngine(BaseEngine):
+class _ReferenceCache:
+    """Compute the voice-reference conditionals once per reference file.
+
+    ``generate(audio_prompt_path=...)`` re-encodes the reference audio on *every* call, and long
+    texts are synthesised in many chunks. ``prepare_conditionals`` does the same work once; later
+    calls then omit the prompt path and reuse the stored conditionals.
+    """
+
+    _cond_key: tuple[str, int, int] | None = None
+
+    def _use_cached_reference(self, ref: Any, exaggeration: float | None = None) -> bool:
+        if not ref or not Path(str(ref)).exists():
+            return False
+        prepare = getattr(self.model, "prepare_conditionals", None)
+        if prepare is None:
+            return False
+        key = (str(ref), Path(str(ref)).stat().st_mtime_ns, id(self.model))  # id(): a reloaded model has no conds
+        if self._cond_key == key:
+            return True
+        try:
+            if exaggeration is None:
+                prepare(str(ref))
+            else:
+                prepare(str(ref), exaggeration=exaggeration)
+        except Exception:
+            self._cond_key = None
+            return False  # fall back to passing audio_prompt_path on each call
+        self._cond_key = key
+        return True
+
+
+class ChatterboxEngine(_ReferenceCache, BaseEngine):
     adapter = "chatterbox"
     supports_clone = True
 
@@ -71,7 +102,7 @@ class ChatterboxEngine(BaseEngine):
             "exaggeration": float(payload.get("exaggeration") or 0.5),
             "cfg_weight": float(payload.get("cfg_weight") or 0.5),
         }
-        if ref and Path(str(ref)).exists():
+        if ref and Path(str(ref)).exists() and not self._use_cached_reference(ref, kwargs["exaggeration"]):
             kwargs["audio_prompt_path"] = str(ref)
         progress({"percent": 25, "phase": "synthesis"})
         wav = self.model.generate(text, **kwargs)
@@ -94,7 +125,7 @@ class ChatterboxEngine(BaseEngine):
         }
 
 
-class ChatterboxTurboEngine(BaseEngine):
+class ChatterboxTurboEngine(_ReferenceCache, BaseEngine):
     adapter = "chatterbox_turbo"
     supports_clone = True
 
@@ -124,7 +155,7 @@ class ChatterboxTurboEngine(BaseEngine):
         started = time.perf_counter()
         kwargs: dict[str, Any] = {}
         ref = payload.get("reference_path") or None
-        if ref and Path(str(ref)).exists():
+        if ref and Path(str(ref)).exists() and not self._use_cached_reference(ref):
             kwargs["audio_prompt_path"] = str(ref)
         progress({"percent": 25, "phase": "synthesis"})
         wav = self.model.generate(str(payload["text"]), **kwargs)

@@ -7,6 +7,7 @@ import type { QueuePayload } from "../api/types";
 import { ResourceDecision } from "../components/TaskDecision";
 import { TaskTimer } from "../components/TaskPanel";
 import { Badge, EmptyState, ErrorBox, PageHeader, Panel } from "../components/ui";
+import { usePolling } from "../hooks/usePolling";
 
 export function QueuePage() {
   const [data, setData] = useState<QueuePayload | null>(null);
@@ -14,9 +15,8 @@ export function QueuePage() {
   const load = () => api<QueuePayload>("/api/queue").then(setData).catch((err: Error) => setError(err.message));
   useEffect(() => {
     load();
-    const timer = window.setInterval(load, 1000);
-    return () => window.clearInterval(timer);
   }, []);
+  usePolling(load, 1000);
   const tasks = data?.tasks ?? [];
   return (
     <div className="space-y-6">

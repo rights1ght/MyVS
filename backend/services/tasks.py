@@ -32,6 +32,28 @@ def _now() -> float:
     return time.monotonic()
 
 
+# Keys of a task result that are large and already stored in the transcript file / output folder.
+_BULKY_RESULT_KEYS = ("segments",)
+
+
+def slim_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Result without the bulky parts (STT segments with word timestamps can be megabytes).
+
+    The full transcript lives in ``transcript.json``. Keeping a second and third copy in the task row,
+    the progress store and the event log made every task list request load/serialize hundreds of MB.
+    """
+    if not isinstance(result, dict):
+        return result
+    slim = {key: value for key, value in result.items() if key not in _BULKY_RESULT_KEYS}
+    if "segments" in result:
+        slim["segments_count"] = len(result["segments"] or [])
+    return slim
+
+
+_SUMMARY_COLUMNS = [column for column in TaskRecord.__table__.columns if column.name != "params"]
+_DATETIME_FIELDS = ("queued_at", "started_at", "finished_at", "created_at", "updated_at")
+
+
 def _param_float(params: dict[str, Any], key: str, default: float) -> float:
     """Numeric task parameter where 0 is a legitimate value (e.g. volume=0)."""
     value = params.get(key)
@@ -467,17 +489,17 @@ class TaskService:
                 row.peak_gpu_temp_c = peaks["temp"]
                 row.warnings = warnings
                 row.output_paths = [p for p in [result.get("output_path"), result.get("transcript_path")] if p]
-                row.params = {**(row.params or {}), "result": result}
+                row.params = {**(row.params or {}), "result": slim_result(result)}
                 row.updated_at = finished
                 session.add(row)
-            progress_store.set(task_id, status="completed", phase="done", result=result, timings={
+            progress_store.set(task_id, status="completed", phase="done", result=slim_result(result), timings={
                 "queue_ms": task.queue_ms,
                 "load_ms": load_ms,
                 "infer_ms": int(infer_seconds * 1000),
                 "post_ms": post_ms,
                 "total_ms": int((finished - task.queued_at).total_seconds() * 1000),
             })
-            self._event(task_id, "completed", "Готово", result)
+            self._event(task_id, "completed", "Готово", slim_result(result))
             logger.info("task completed %s in %.2fs", task_id, _now() - started_mono)
         except TaskCancelled:
             self._mark_cancelled(task_id)
@@ -647,6 +669,7 @@ class TaskService:
             pitch_semitones=_param_float(params, "pitch", 0.0),
             volume=_param_float(params, "volume", 1.0),
             speed_already_applied=result.get("chunk_results", [{}])[-1].get("speed_applied", False) if result.get("chunk_results") else False,
+            copy_if_unchanged=False,
         )
         if processed.exists():
             output_path.unlink(missing_ok=True)
@@ -675,10 +698,39 @@ class TaskService:
                 except Exception:
                     pass
         data["result"] = result
-        data["progress"] = progress_store.get(task.id)
+        # ``progress.result`` duplicated ``result``; drop it to halve the payload of every poll.
+        data["progress"] = {key: value for key, value in progress_store.get(task.id).items() if key != "result"}
         data.pop("params", None)
         data["params"] = params
         return data
+
+    def task_summaries(
+        self,
+        *,
+        limit: int = 100,
+        type: str | None = None,
+        model_id: str | None = None,
+        status: str | None = None,
+        project_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Light task rows for list views: no ``params``/``result`` and no transcript file reads."""
+        statement = select(*_SUMMARY_COLUMNS).order_by(TaskRecord.created_at.desc()).limit(max(1, min(limit, 500)))
+        for column, value in ((TaskRecord.type, type), (TaskRecord.model_id, model_id), (TaskRecord.status, status), (TaskRecord.project_id, project_id)):
+            if value:
+                statement = statement.where(column == value)
+        with session_scope() as session:
+            rows = session.exec(statement).all()
+        summaries: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row._mapping)
+            for field in _DATETIME_FIELDS:
+                if data.get(field) is not None:
+                    data[field] = data[field].isoformat()
+            data["params"] = {}
+            data["result"] = None
+            data["progress"] = {key: value for key, value in progress_store.get(data["id"]).items() if key != "result"}
+            summaries.append(data)
+        return summaries
 
 
 tasks = TaskService()

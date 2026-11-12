@@ -18,8 +18,8 @@ def snapshot() -> MonitorSnapshot:
 
 
 @router.get("/history", response_model=list[MonitorSnapshot])
-def history(seconds: int = 300) -> list[MonitorSnapshot]:
-    return [MonitorSnapshot(**item) for item in monitor.get_history(seconds)]
+def history(seconds: int = 300, after: int | None = None) -> list[MonitorSnapshot]:
+    return [MonitorSnapshot(**item) for item in monitor.get_history(seconds, after)]
 
 
 @router.get("/alerts")

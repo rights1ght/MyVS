@@ -19,14 +19,16 @@ from backend.services.resource_manager import ResourceError, resources
 router = APIRouter(prefix="/api", tags=["models"])
 
 
-def _public(model: ModelRecord) -> dict[str, Any]:
-    item = registry.model_public(model.id) or {}
-    source = item.get("source") or {}
+def _finalize(model: ModelRecord, item: dict[str, Any]) -> dict[str, Any]:
     item.pop("source", None)
     item["warnings"] = model.warnings
     item["capabilities"] = model.capabilities
     item["languages"] = model.languages
     return item
+
+
+def _public(model: ModelRecord) -> dict[str, Any]:
+    return _finalize(model, registry.model_public(model.id) or {})
 
 
 @router.get("/models")
@@ -39,9 +41,8 @@ def list_models(
     installed: bool | None = None,
     q: str | None = None,
 ) -> list[dict[str, Any]]:
-    models = registry.all(category)
-    result: list[dict[str, Any]] = []
-    for model in models:
+    candidates: list[ModelRecord] = []
+    for model in registry.all(category):
         if license and model.license.lower() != license.lower():
             continue
         if language and language not in (model.languages or []):
@@ -50,12 +51,14 @@ def list_models(
             continue
         if russian and model.russian_status != russian:
             continue
-        item = _public(model)
-        if installed is not None and bool(item.get("installed")) != installed:
-            continue
         if q and q.lower() not in f"{model.name} {model.description}".lower():
             continue
-        result.append(item)
+        candidates.append(model)
+    result: list[dict[str, Any]] = []
+    for model, item in zip(candidates, registry.public_many(candidates)):
+        if installed is not None and bool(item.get("installed")) != installed:
+            continue
+        result.append(_finalize(model, item))
     return result
 
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, field_validator
 from sqlmodel import select
 
 from backend.api.errors import AppError
-from backend.db.models import ModelRecord, Voice
+from backend.db.models import ModelRecord, ModelVariant, Voice
 from backend.db.session import session_scope
 from backend.services.model_registry import registry
 from backend.services.tasks import tasks
@@ -27,14 +27,34 @@ from backend.services.voices import (
 router = APIRouter(prefix="/api/voices", tags=["voices"])
 
 
+def _model_info(model_ids: set[str]) -> tuple[dict[str, str], set[str]]:
+    """model_id -> name and the set of model ids with an installed variant, in two queries."""
+    ids = {model_id for model_id in model_ids if model_id}
+    if not ids:
+        return {}, set()
+    with session_scope() as session:
+        names = dict(session.exec(select(ModelRecord.id, ModelRecord.name).where(ModelRecord.id.in_(ids))).all())
+        installed = set(
+            session.exec(select(ModelVariant.model_id).where(ModelVariant.model_id.in_(ids), ModelVariant.install_state == "installed")).all()
+        )
+    return names, installed
+
+
+def _public_many(voices: list[Voice]) -> list[dict[str, Any]]:
+    names, installed = _model_info({voice.model_id for voice in voices if voice.model_id})
+    return [
+        {
+            **voice.model_dump(),
+            "model_name": names.get(voice.model_id or "", ""),
+            "model_installed": bool(voice.model_id) and voice.model_id in installed,
+            "has_reference": bool(voice.reference_path and Path(voice.reference_path).exists()),
+        }
+        for voice in voices
+    ]
+
+
 def _public(voice: Voice) -> dict[str, Any]:
-    model = registry.get(voice.model_id) if voice.model_id else None
-    return {
-        **voice.model_dump(),
-        "model_name": model.name if model else "",
-        "model_installed": any(v.install_state == "installed" for v in registry.variants(voice.model_id)) if voice.model_id else False,
-        "has_reference": bool(voice.reference_path and Path(voice.reference_path).exists()),
-    }
+    return _public_many([voice])[0]
 
 
 @router.get("")
@@ -43,7 +63,7 @@ def list_all(
     language: str | None = None,
     model_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    return [_public(voice) for voice in list_voices(kind, language, model_id)]
+    return _public_many(list_voices(kind, language, model_id))
 
 
 @router.get("/{voice_id}")

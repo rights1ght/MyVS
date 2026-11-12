@@ -648,6 +648,24 @@ class ResourceManager:
         with self._lifecycle_lock:
             return self._unload_locked(model_id, reason=reason, force=force)
 
+    def _wait_vram_release(self, before_gb: float, runtime: ModelRuntime, timeout: float = 0.5) -> float:
+        """Return GPU memory in use once the driver has handed the model's VRAM back.
+
+        Replaces a fixed ``sleep(0.5)`` that was paid on every unload (also for CPU models, and while
+        holding the lifecycle lock, so it delayed every model switch). Polls and stops as soon as the
+        expected amount has been released.
+        """
+        expected_gb = (runtime.vram_mb or 0.0) / 1024.0
+        if runtime.device == "cpu" or expected_gb < 0.05:
+            return self._mem()["gpu_used_gb"]
+        target = before_gb - expected_gb * 0.8
+        deadline = time.monotonic() + timeout
+        while True:
+            used = self._mem()["gpu_used_gb"]
+            if used <= target or time.monotonic() >= deadline:
+                return used
+            time.sleep(0.02)
+
     def _unload_locked(self, model_id: str, *, reason: str = "manual", force: bool = False) -> dict[str, Any]:
         acquired_inference_lock = False
         with self._lock:
@@ -690,8 +708,7 @@ class ResourceManager:
         with self._lock:
             if self._runtimes.get(model_id) is runtime:
                 self._runtimes.pop(model_id, None)
-        time.sleep(0.5)
-        after = self._mem()["gpu_used_gb"]
+        after = self._wait_vram_release(before, runtime)
         released = max(0.0, before - after)
         self._runtime_event(model_id, runtime.variant_id, "unload", runtime.device, started, True, round(released * 1024, 1), pid=runtime.worker.pid if runtime.worker else None)
         logger.info("unloaded %s (%s), released %.2f GB", model_id, reason, released)

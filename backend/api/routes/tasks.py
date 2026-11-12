@@ -29,18 +29,8 @@ def list_tasks(
     project_id: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    with session_scope() as session:
-        statement = select(TaskRecord).order_by(desc(TaskRecord.created_at)).limit(max(1, min(limit, 500)))
-        if type:
-            statement = statement.where(TaskRecord.type == type)
-        if model_id:
-            statement = statement.where(TaskRecord.model_id == model_id)
-        if status:
-            statement = statement.where(TaskRecord.status == status)
-        if project_id:
-            statement = statement.where(TaskRecord.project_id == project_id)
-        rows = session.exec(statement).all()
-    return [tasks.task_public(row) for row in rows]
+    # List rows are deliberately light (``params``/``result`` empty); fetch /api/tasks/{id} for the full task.
+    return tasks.task_summaries(limit=limit, type=type, model_id=model_id, status=status, project_id=project_id)
 
 
 @router.get("/tasks/{task_id}")

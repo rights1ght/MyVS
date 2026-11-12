@@ -186,11 +186,12 @@ class Monitor:
         if level <= self._last_level.get(metric, 0):
             return
         now = time.monotonic()
+        severity = {1: "warning", 2: "high", 3: "critical"}[level]
         if now - self._last_alert_ts.get(metric, 0) < 30:
             for existing in reversed(self.alerts):
-                if existing["metric"] == metric and existing["level"] == level:
+                # alerts store ``severity``, not a numeric level (this used to raise KeyError every second)
+                if existing["metric"] == metric and existing["severity"] == severity:
                     return
-        severity = {1: "warning", 2: "high", 3: "critical"}[level]
         alert = {
             "id": f"mem-{int(time.time() * 1000)}-{metric}",
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -292,8 +293,16 @@ class Monitor:
     def snapshot(self) -> dict[str, Any]:
         return self.history[-1] if self.history else self.sample()
 
-    def get_history(self, seconds: int = 300) -> list[dict[str, Any]]:
-        return list(self.history)[-min(max(seconds, 1), 300) :]
+    def get_history(self, seconds: int = 300, after: int | None = None) -> list[dict[str, Any]]:
+        """Last ``seconds`` samples; with ``after`` only samples newer than that ``seq``.
+
+        The Monitor page used to re-download all 300 samples (~170 KB) every 2 s; it now asks only for
+        what it has not seen. A ``seq`` from before a server restart (greater than ours) means "send everything".
+        """
+        items = list(self.history)[-min(max(seconds, 1), 300) :]
+        if after is not None and items and after <= items[-1]["seq"]:
+            items = [item for item in items if item["seq"] > after]
+        return items
 
 
 monitor = Monitor()
