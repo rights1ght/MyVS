@@ -208,6 +208,25 @@ class CustomModelPayload(BaseModel):
     variant: dict[str, Any] = Field(default_factory=dict)
 
 
+@router.delete("/models/custom/{model_id}")
+def remove_custom_model(model_id: str) -> dict[str, bool]:
+    model = registry.get(model_id)
+    if not model or not model.is_custom:
+        raise AppError("MODEL_NOT_FOUND", "Пользовательская модель не найдена.", 404)
+    if resources.is_loaded(model_id):
+        try:
+            resources.unload(model_id, reason="delete", force=True)
+        except ResourceError as exc:
+            raise AppError(exc.code, str(exc), 409) from exc
+    try:
+        removed = registry.remove_custom(model_id)
+    except ValueError as exc:
+        raise AppError("CUSTOM_MODEL_IN_USE", str(exc), 409) from exc
+    if not removed:
+        raise AppError("MODEL_NOT_FOUND", "Пользовательская модель не найдена.", 404)
+    return {"removed": True}
+
+
 @router.post("/models/custom")
 def add_custom_model(payload: CustomModelPayload) -> dict[str, Any]:
     try:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.api.errors import AppError
 from backend.services.model_registry import registry
@@ -27,6 +27,40 @@ class SynthesizePayload(BaseModel):
     variant_id: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     task_type: str = "tts"
+
+    @field_validator("text")
+    @classmethod
+    def _text_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
+
+
+# Engine-specific knobs a client may pass through ``params`` (name -> (type, min, max)).
+# Everything else is dropped: ``params`` used to be merged *after* the clamped
+# speed/pitch/volume, so it could override them, and it could also inject
+# internal keys such as ``confirmed`` (skips the resource check) or ``max_chars=1``.
+_EXTRA_PARAMS: dict[str, tuple[type, float, float]] = {
+    "cfg_value": (float, 0.0, 20.0),
+    "cfg_weight": (float, 0.0, 2.0),
+    "exaggeration": (float, 0.0, 2.0),
+    "pause_sec": (float, 0.0, 5.0),
+    "inference_timesteps": (int, 1, 100),
+    "max_chars": (int, 50, 1000),
+}
+
+
+def _sanitize_params(raw: dict[str, Any]) -> dict[str, Any]:
+    clean: dict[str, Any] = {}
+    for key, (kind, low, high) in _EXTRA_PARAMS.items():
+        if raw.get(key) is None:
+            continue
+        try:
+            value = kind(raw[key])
+        except (TypeError, ValueError):
+            raise AppError("VALIDATION_ERROR", f"params.{key}: некорректное значение.", 422) from None
+        clean[key] = max(kind(low), min(value, kind(high)))
+    return clean
 
 
 def _choose_model(voice: Any, requested: str) -> str:
@@ -62,7 +96,7 @@ def _enqueue(payload: SynthesizePayload, *, task_type: str) -> dict[str, Any]:
         "volume": max(0.0, min(float(payload.volume), 2.0)),
         "voice_kind": voice.kind,
         "variant_id": payload.variant_id,
-        **payload.params,
+        **_sanitize_params(payload.params),
     }
     task = tasks.enqueue(
         task_type,

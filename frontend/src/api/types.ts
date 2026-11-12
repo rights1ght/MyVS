@@ -192,6 +192,7 @@ export interface DownloadInfo {
 
 export interface ResourceOption {
   id: string;
+  action?: "evict" | "cpu" | "quant" | "cancel";
   label: string;
   model_id?: string;
   variant_id?: string;

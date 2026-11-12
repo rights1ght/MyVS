@@ -118,7 +118,7 @@ def retry_task(task_id: str) -> dict[str, Any]:
         if row:
             row.retry_of = task_id
             session.add(row)
-    return tasks.task_public(new)
+    return tasks.task_public(tasks.get(new.id) or new)
 
 
 @router.get("/tasks/{task_id}/export")

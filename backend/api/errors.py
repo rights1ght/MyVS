@@ -67,7 +67,12 @@ def install_error_handlers(app: FastAPI) -> None:
     async def handle_validation(_request: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
-            content=error_payload("VALIDATION_ERROR", "Проверьте параметры запроса.", {"errors": exc.errors()}),
+            content=error_payload(
+                "VALIDATION_ERROR",
+                "Проверьте параметры запроса.",
+                # ``ctx`` may hold a raw exception object (field_validator), which JSONResponse cannot serialize.
+                {"errors": [{"loc": list(e.get("loc", ())), "msg": str(e.get("msg", "")), "type": str(e.get("type", ""))} for e in exc.errors()]},
+            ),
         )
 
     @app.exception_handler(Exception)

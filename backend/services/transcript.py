@@ -6,14 +6,12 @@ from typing import Any
 
 
 def fmt_timestamp(seconds: float, *, srt: bool = False) -> str:
-    seconds = max(0.0, float(seconds))
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int(round((seconds - int(seconds)) * 1000))
-    if millis >= 1000:
-        secs += 1
-        millis -= 1000
+    # Round once to whole milliseconds, then split: rounding 59.9996 s must give
+    # 00:01:00,000 and never the invalid 00:00:60,000.
+    total_ms = int(round(max(0.0, float(seconds)) * 1000))
+    hours, rest = divmod(total_ms, 3_600_000)
+    minutes, rest = divmod(rest, 60_000)
+    secs, millis = divmod(rest, 1000)
     separator = "," if srt else "."
     return f"{hours:02d}:{minutes:02d}:{secs:02d}{separator}{millis:03d}"
 
@@ -40,7 +38,10 @@ def transcript_to_vtt(segments: list[dict[str, Any]]) -> str:
 
 def transcript_to_txt(segments: list[dict[str, Any]], with_timestamps: bool = False) -> str:
     if with_timestamps:
-        return "\n".join(f"[{fmt_timestamp(item['start'])} → {fmt_timestamp(item['end'])}] {item.get('text', '').strip()}" for item in segments)
+        return "\n".join(
+            f"[{fmt_timestamp(item['start'])} → {fmt_timestamp(item['end'])}] {str(item.get('text') or '').strip()}"
+            for item in segments
+        )
     return "\n".join(str(item.get("text") or "").strip() for item in segments)
 
 

@@ -173,7 +173,9 @@ class DownloadManager:
             for key, value in fields.items():
                 setattr(row, key, value)
             row.updated_at = _utcnow()
-            if row.bytes_total:
+            # Only reset the speed when the caller did not report one and the job is no longer running;
+            # resetting it unconditionally made the UI show 0 B/s for every download.
+            if "speed_bps" not in fields and row.status in ("completed", "paused", "cancelled", "error"):
                 row.speed_bps = 0.0
             session.add(row)
 
@@ -286,6 +288,13 @@ class DownloadManager:
                         break
                     offset = part.stat().st_size if part.exists() else 0
                     if expected and offset == expected:
+                        # Whole file already on disk (e.g. crash before the final rename): it still has to be
+                        # hashed, otherwise the empty hasher below fails the checksum comparison.
+                        if item.get("sha256"):
+                            hasher = hashlib.sha256()
+                            with part.open("rb") as handle:
+                                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                                    hasher.update(block)
                         last_error = None
                         break
                     downloaded = 0

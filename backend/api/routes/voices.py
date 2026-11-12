@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import select
 
 from backend.api.errors import AppError
@@ -59,7 +59,10 @@ def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="myvs-ref-") as tmp:
         suffix = Path(file.filename or "reference.wav").suffix or ".wav"
         target = Path(tmp) / f"reference{suffix}"
-        save_upload(file, target, max_mb=100)
+        try:
+            save_upload(file, target, max_mb=100)
+        except ValueError as exc:
+            raise AppError("UPLOAD_TOO_LARGE", str(exc), 413) from exc
         try:
             return analyze_file(target)
         except Exception as exc:
@@ -147,6 +150,15 @@ class VoicePatch(BaseModel):
     description: str | None = None
     language: str | None = None
 
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("name must not be blank")
+        return value
+
 
 @router.patch("/{voice_id}")
 def patch(voice_id: str, payload: VoicePatch) -> dict[str, Any]:
@@ -154,6 +166,8 @@ def patch(voice_id: str, payload: VoicePatch) -> dict[str, Any]:
         voice = session.get(Voice, voice_id)
         if not voice:
             raise AppError("VOICE_NOT_FOUND", "Голос не найден.", 404)
+        if voice.kind == "builtin":
+            raise AppError("VOICE_PROTECTED", "Встроенные голоса нельзя изменять.", 400)
         if payload.name is not None:
             voice.name = payload.name
         if payload.description is not None:

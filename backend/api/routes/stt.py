@@ -21,6 +21,8 @@ def pick_stt_model(requested: str | None) -> str:
         model = registry.get(requested)
         if not model:
             raise AppError("MODEL_NOT_FOUND", "Модель STT не найдена.", 404)
+        if model.category != "stt":
+            raise AppError("MODEL_CATEGORY_MISMATCH", f"Модель «{model.name}» не умеет распознавать речь.", 400)
         if not any(v.install_state == "installed" for v in registry.variants(requested)):
             raise AppError("MODEL_NOT_INSTALLED", f"Модель «{model.name}» не скачана.", 409)
         return requested

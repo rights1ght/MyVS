@@ -39,6 +39,48 @@ _KEY_VALUE = {
 }
 
 
+RESOURCE_MODES = ("parallel", "economy", "exclusive")
+CONFLICT_POLICIES = ("ask", "auto")
+
+
+class SettingsError(ValueError):
+    """A settings value has the wrong type or is out of range."""
+
+
+def _number(key: str, value: Any, *, minimum: float = 0.0, integer: bool = False) -> float | int:
+    if isinstance(value, bool) or value is None:
+        raise SettingsError(f"{key}: ожидается число.")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise SettingsError(f"{key}: ожидается число.") from None
+    if number != number or number in (float("inf"), float("-inf")) or number < minimum:
+        raise SettingsError(f"{key}: значение должно быть не меньше {minimum:g}.")
+    return int(number) if integer else number
+
+
+def validate_settings(patch: dict[str, Any]) -> dict[str, Any]:
+    """Return a cleaned copy of ``patch`` (unknown keys dropped); raise SettingsError otherwise."""
+    clean: dict[str, Any] = {}
+    for key, value in patch.items():
+        if key not in DEFAULTS:
+            continue
+        if key == "resource_mode":
+            if value not in RESOURCE_MODES:
+                raise SettingsError(f"resource_mode: допустимо {', '.join(RESOURCE_MODES)}.")
+        elif key == "conflict_policy":
+            if value not in CONFLICT_POLICIES:
+                raise SettingsError(f"conflict_policy: допустимо {', '.join(CONFLICT_POLICIES)}.")
+        elif key in ("reserve_vram_gb", "reserve_ram_gb", "vram_limit_gb", "stt_temperature", "tts_volume"):
+            value = _number(key, value)
+        elif key in ("idle_unload_seconds", "stt_beam_size", "stt_batch_size"):
+            value = _number(key, value, integer=True)
+        elif key == "preload_models" and not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
+            raise SettingsError("preload_models: ожидается список id моделей.")
+        clean[key] = value
+    return clean
+
+
 def get_settings_values() -> dict[str, Any]:
     values = dict(DEFAULTS)
     with session_scope() as session:
@@ -53,9 +95,7 @@ def get_settings_values() -> dict[str, Any]:
 
 def update_settings(patch: dict[str, Any]) -> dict[str, Any]:
     values = get_settings_values()
-    for key, value in patch.items():
-        if key not in DEFAULTS:
-            continue
+    for key, value in validate_settings(patch).items():
         values[key] = value
         with session_scope() as session:
             row = session.get(AppSetting, key)
@@ -75,7 +115,8 @@ def list_profiles() -> list[SettingsProfile]:
 def create_profile(name: str, values: dict[str, Any], model_id: str = "", is_default: bool = False) -> SettingsProfile:
     with session_scope() as session:
         profile = SettingsProfile(name=name, scope="model" if model_id else "global", model_id=model_id, values=values, is_default=is_default)
-        if is_default and model_id:
+        if is_default:
+            # one default per model, and one default among the global (model_id == "") profiles
             for existing in session.exec(select(SettingsProfile).where(SettingsProfile.model_id == model_id)).all():
                 existing.is_default = False
                 session.add(existing)
@@ -96,7 +137,7 @@ def update_profile(profile_id: str, patch: dict[str, Any]) -> SettingsProfile | 
             profile.values = dict(patch["values"] or {})
         if "is_default" in patch:
             profile.is_default = bool(patch["is_default"])
-            if profile.is_default and profile.model_id:
+            if profile.is_default:
                 for existing in session.exec(select(SettingsProfile).where(SettingsProfile.model_id == profile.model_id)).all():
                     if existing.id != profile.id:
                         existing.is_default = False

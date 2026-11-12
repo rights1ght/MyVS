@@ -133,11 +133,22 @@ class ResourceManager:
         from backend.services.settings_service import get_settings_values
 
         values = get_settings_values()
-        self._mode = str(values.get("resource_mode", self._mode))
-        self._policy = str(values.get("conflict_policy", self._policy))
-        self._reserve_vram_gb = float(values.get("reserve_vram_gb", self._reserve_vram_gb))
-        self._reserve_ram_gb = float(values.get("reserve_ram_gb", self._reserve_ram_gb))
-        self._idle_seconds = int(values.get("idle_unload_seconds", self._idle_seconds))
+        # Each value is applied independently: one corrupt row must not abort the
+        # whole refresh (it runs every 15 s in the idle watcher, which also unloads idle models).
+        def apply(key: str, attr: str, cast: Callable[[Any], Any], valid: Callable[[Any], bool] = lambda _v: True) -> None:
+            try:
+                value = cast(values.get(key, getattr(self, attr)))
+                if not valid(value):
+                    raise ValueError(value)
+                setattr(self, attr, value)
+            except (TypeError, ValueError):
+                logger.warning("ignoring invalid setting %s=%r", key, values.get(key))
+
+        apply("resource_mode", "_mode", str, lambda v: v in ("parallel", "economy", "exclusive"))
+        apply("conflict_policy", "_policy", str, lambda v: v in ("ask", "auto"))
+        apply("reserve_vram_gb", "_reserve_vram_gb", float, lambda v: v >= 0)
+        apply("reserve_ram_gb", "_reserve_ram_gb", float, lambda v: v >= 0)
+        apply("idle_unload_seconds", "_idle_seconds", int, lambda v: v >= 0)
 
     @property
     def mode(self) -> str:
@@ -177,7 +188,7 @@ class ResourceManager:
         model = registry.get(model_id)
         if not model:
             raise ResourceError("MODEL_NOT_FOUND", "Модель не найдена.")
-        variant = registry.get_variant(model_id, variant_id)
+        variant = registry.resolve_variant(model_id, variant_id)
         if not variant:
             raise ResourceError("VARIANT_NOT_FOUND", "Вариант модели не найден.")
         target_device = device or variant.device
@@ -279,6 +290,7 @@ class ResourceManager:
             options.append(
                 {
                     "id": f"evict:{runtime.model_id}",
+                    "action": "evict",
                     "label": f"Выгрузить {runtime.model_name} (LRU)",
                     "model_id": runtime.model_id,
                     "reclaim_gb": round(reclaimed, 2),
@@ -291,6 +303,7 @@ class ResourceManager:
                     options.append(
                         {
                             "id": f"cpu:{other.id}",
+                            "action": "cpu",
                             "label": "Перевести на CPU",
                             "variant_id": other.id,
                             "would_fit": mem["free_ram_gb"] - (other.ram_estimate_gb + 0.3) >= 0,
@@ -302,12 +315,13 @@ class ResourceManager:
                     options.append(
                         {
                             "id": f"quant:{other.id}",
+                            "action": "quant",
                             "label": f"Взять вариант {other.label or other.precision}",
                             "variant_id": other.id,
                             "would_fit": mem["free_vram_gb"] - other.vram_estimate_gb >= 0.25,
                         }
                     )
-        options.append({"id": "cancel", "label": "Отмена"})
+        options.append({"id": "cancel", "action": "cancel", "label": "Отмена"})
         return options
 
     @staticmethod
@@ -368,7 +382,7 @@ class ResourceManager:
             model = registry.get(model_id)
             if not model:
                 raise ResourceError("MODEL_NOT_FOUND", "Модель не найдена.")
-            variant = registry.get_variant(model_id, variant_id) or registry.default_variant(model_id)
+            variant = registry.resolve_variant(model_id, variant_id)
             if not variant:
                 raise ResourceError("VARIANT_NOT_FOUND", "Вариант модели не найден.")
             if device and device != variant.device:
@@ -714,7 +728,15 @@ class ResourceManager:
             for runtime in self._runtimes.values()
             if not runtime.busy and (force or now - runtime.last_used >= self._idle_seconds)
         ]
-        return [self.unload(runtime.model_id, reason="idle") for runtime in targets]
+        results: list[dict[str, Any]] = []
+        for runtime in targets:
+            # One model that cannot be unloaded (still loading, worker stuck) must not
+            # prevent the remaining idle models from being released.
+            try:
+                results.append(self.unload(runtime.model_id, reason="idle"))
+            except ResourceError as exc:
+                logger.warning("idle unload of %s skipped: %s", runtime.model_id, exc)
+        return results
 
     def restore_after_exclusive(self) -> list[str]:
         """Restore idle models that were evicted for an exclusive/exclusive-only task."""
@@ -757,6 +779,7 @@ class ResourceManager:
     def start_idle_watcher(self) -> None:
         if self._idle_thread and self._idle_thread.is_alive():
             return
+        self._stop.clear()
         def loop() -> None:
             while not self._stop.wait(15):
                 try:
