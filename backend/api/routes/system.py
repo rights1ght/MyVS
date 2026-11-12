@@ -21,6 +21,7 @@ from backend.db.models import StartupPhase, StartupRun
 from backend.db.session import session_scope
 from backend.api.errors import AppError
 from backend.engines.runtimes import runtime_status
+from backend.services.preflight import check_environment
 from backend.services.monitor import monitor
 from backend.services.resource_manager import resources
 from backend.services.tasks import tasks
@@ -143,13 +144,16 @@ def diagnostics() -> dict[str, object]:
         except Exception:
             ffmpeg = None
     packages: dict[str, str] = {}
-    for name in ("fastapi", "sqlmodel", "psutil", "nvidia-ml-py", "faster-whisper", "torch", "omnivoice"):
+    for name in ("fastapi", "sqlmodel", "psutil", "nvidia-ml-py", "huggingface-hub", "faster-whisper", "torch", "omnivoice"):
         try:
             packages[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             packages[name] = "not installed"
+    gpu = monitor.probe_gpu()
     return {
-        "gpu": monitor.probe_gpu(),
+        "gpu": gpu,
+        "python": sys.executable,
+        "warnings": check_environment(gpu_present=bool(gpu.get("available"))),
         "ffmpeg": ffmpeg,
         "packages": packages,
         "db_path": str(settings.db_path),

@@ -118,7 +118,7 @@ class ResourceManager:
             self._gpu_available = False
             return
         try:
-            import pynvml
+            from backend.services.nvml import pynvml
 
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
@@ -527,7 +527,7 @@ class ResourceManager:
         if not pid:
             return 0.0
         try:
-            import pynvml
+            from backend.services.nvml import pynvml
 
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)

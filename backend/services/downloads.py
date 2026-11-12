@@ -20,6 +20,7 @@ from sqlmodel import Session, select
 from backend.config import settings
 from backend.db.models import Download, ModelVariant
 from backend.db.session import session_scope
+from backend.services.hf_api import HubError, list_repo_files, resolve_url
 from backend.services.model_registry import package_available, registry
 
 logger = logging.getLogger(__name__)
@@ -209,29 +210,23 @@ class DownloadManager:
             return files, dest
         if kind not in ("hf", "hf_files"):
             raise DownloadError(f"Неизвестный тип загрузки: {kind}")
-        from huggingface_hub import HfApi
-
         repo = str(spec.get("repo") or "")
         revision = str(spec.get("revision") or "main")
         if not repo:
             raise DownloadError("В источнике не указан HF-репозиторий.")
-        info = HfApi(token=HF_TOKEN).model_info(repo, revision=revision, files_metadata=True)
+        try:
+            listing = list_repo_files(repo, revision, HF_TOKEN)
+        except HubError as exc:
+            raise DownloadError(str(exc)) from exc
         include = list(spec.get("include") or [])
         files: list[dict[str, Any]] = []
-        for sibling in info.siblings or []:
-            name = sibling.rfilename
+        for entry in listing:
+            name = entry["path"]
             if name in (".gitattributes", "README.md"):
                 continue
             if include and not any(fnmatch.fnmatch(name, pattern) for pattern in include):
                 continue
-            files.append(
-                {
-                    "path": name,
-                    "url": f"https://huggingface.co/{repo}/resolve/{revision}/{quote(name, safe='/')}",
-                    "size": int(getattr(sibling, "size", 0) or 0),
-                    "sha256": _lfs_sha(sibling),
-                }
-            )
+            files.append({"path": name, "url": resolve_url(repo, revision, name), "size": entry["size"], "sha256": entry["sha256"]})
         if not files:
             raise DownloadError("HF-репозиторий не содержит подходящих файлов.")
         return files, dest

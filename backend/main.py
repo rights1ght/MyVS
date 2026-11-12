@@ -28,6 +28,7 @@ from backend.db.session import init_db
 from backend.services.downloads import downloads
 from backend.services.model_registry import registry
 from backend.services.monitor import monitor
+from backend.services.preflight import check_environment
 from backend.services.resource_manager import resources
 from backend.services.tasks import tasks
 from backend.services.timers import startup
@@ -68,6 +69,8 @@ async def lifespan(_app: FastAPI):
     with startup.phase("gpu_probe", "NVML / GPU"):
         gpu = monitor.probe_gpu()
         logger.info("GPU: %s", gpu.get("name") or gpu.get("error"))
+        for problem in check_environment(gpu_present=bool(gpu.get("available"))):
+            logger.warning("%s", problem["message"])
     with startup.phase("model_scan", "каталог моделей"):
         registry.sync()
         seed_builtin_voices()

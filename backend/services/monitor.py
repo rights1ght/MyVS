@@ -15,13 +15,7 @@ from backend.db.session import session_scope
 
 logger = logging.getLogger(__name__)
 
-try:
-    import pynvml
-
-    _NVML_IMPORT_ERROR = ""
-except Exception as exc:  # pragma: no cover - depends on host
-    pynvml = None  # type: ignore[assignment]
-    _NVML_IMPORT_ERROR = str(exc)
+from backend.services.nvml import NVML_BACKEND, NVML_ERROR as _NVML_IMPORT_ERROR, pynvml  # real pynvml or an nvidia-smi shim
 
 
 def _mb(value: float) -> float:
@@ -79,6 +73,7 @@ class Monitor:
             "name": self._gpu_name,
             "total_mb": self._gpu_total_mb,
             "error": self._gpu_error,
+            "backend": NVML_BACKEND,  # "nvidia-ml-py", "nvidia-smi" (fallback) or "none"
         }
 
     def _gpu_snapshot(self) -> dict[str, Any]:
